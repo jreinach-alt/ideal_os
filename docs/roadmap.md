@@ -14,7 +14,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ### Sprint 0.1 — Repo Scaffolding and Test Harness
 
-**Status:** Not started
+**Status:** In progress
 
 **Scope:**
 - Create the canonical directory tree per `ideal_os_repo_structure_spec.md`
@@ -30,7 +30,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 - At least one sample test passes
 - Agent workflow and testing docs are complete
 
-**Sprint Spec:** `docs/sprints/sprint-0.1.md` (to be created)
+**Sprint Spec:** `docs/sprints/sprint-0.1.md`
 
 ---
 
