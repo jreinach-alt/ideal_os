@@ -188,7 +188,8 @@ config/
 ├── portmaster/
 ├── updater/
 ├── tasks/
-└── sync/
+├── sync/
+└── notifications/
 ```
 
 Examples:
@@ -249,7 +250,8 @@ runtime/
 ├── library/
 │   └── schema/
 ├── updater/
-│   └── schema/
+│   ├── schema/
+│   └── staging/
 ├── tasks/
 │   └── queues/
 ├── sync/
@@ -685,7 +687,8 @@ ideal-os/
 │   ├── portmaster/
 │   ├── updater/
 │   ├── tasks/
-│   └── sync/
+│   ├── sync/
+│   └── notifications/
 ├── assets/
 │   ├── boot/
 │   ├── branding/
@@ -696,6 +699,8 @@ ideal-os/
 │   ├── sessions/
 │   ├── library/
 │   ├── updater/
+│   │   ├── schema/
+│   │   └── staging/
 │   ├── tasks/
 │   ├── sync/
 │   ├── notifications/

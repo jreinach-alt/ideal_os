@@ -257,11 +257,11 @@ The following Ideal OS-native modules need to be updatable but have no package d
 
 ## Resolution Status
 
-Updated 2026-03-11 after P0/P1 fix pass.
+Updated 2026-03-11 after P0/P1 fix pass and Runtime vs. Repo Boundary Validation.
 
 | Priority | Action | Status | Resolution |
 |----------|--------|--------|------------|
-| **P0** | Update repo structure spec to include `tasks`, `sync`, `notifications` in `src/`, `runtime/`, `config/` | **RESOLVED** | Added to all sections of repo structure spec including packages/ |
+| **P0** | Update repo structure spec to include `tasks`, `sync`, `notifications` in `src/`, `runtime/`, `config/` | **RESOLVED** | Added to all sections of repo structure spec including packages/. Boundary validation found `config/notifications/` was missed — now added. |
 | **P0** | Standardize `game_id` format across all specs | **RESOLVED** | All specs now use `system:game_name` (e.g., `snes:super_metroid`). Codified in CLAUDE.md Data Formats. |
 | **P0** | Standardize `_schema_version` convention (name, type) | **RESOLVED** | All JSON examples updated to `"_schema_version": "1.0"` (underscore-prefixed, string). OTA `schemas` field renamed to `schema_versions` with string values. |
 | **P1** | Extract Library data model (game identity, system taxonomy) into shared contract | **RESOLVED** | `src/common/game_identity.sh` added to Phase 0 Sprint 0.2 in roadmap. Referenced in CLAUDE.md Shared Infrastructure. |
@@ -276,3 +276,52 @@ Updated 2026-03-11 after P0/P1 fix pass.
 | **P2** | Add Library Manager and Emulation Layer phases to roadmap | **RESOLVED** | Phase 6 (Library Manager) and Phase 7 (Emulation Layer) added to roadmap. |
 | **P3** | Standardize timestamp field names for "last changed" | **RESOLVED** | All specs use `updated_at`. Codified in CLAUDE.md Data Formats. |
 | **P3** | Define device identity generation and storage | **OPEN** | Deferred to Cloud Sync implementation (Phase 3). |
+| **P2** | Add `runtime/updater/staging/` to repo structure spec | **RESOLVED** | OTA spec defines staging layout; now reflected in repo structure spec. |
+| **P2** | Resolve dual sync queue paths (MB-5) | **OPEN** | `runtime/sync/queue/` vs `runtime/tasks/queues/sync.json`. Deferred to Phase 2/3 implementation. |
+| **P2** | Add migration naming conventions for `tools/migration/` (MB-8) | **OPEN** | OTA and Session Manager both claim this path. Needs prefix convention (e.g., `ota_*.sh`, `session_*.sh`). |
+| **P2** | Document `/userdata/` and `/Roms/` as inherited NextUI on-device paths | **OPEN** | Referenced by Session Manager and Cloud Sync but never formally mapped. Deferred to Sprint 0.3. |
+
+---
+
+## Part 5 — Runtime vs. Repo Boundary Validation
+
+**Date:** 2026-03-11
+**Scope:** 152 path references across 13 documents
+
+This audit scanned all spec documents for file path references and cross-checked them against the canonical repo layout.
+
+### BV-1: `config/notifications/` missing from repo structure spec (HIGH)
+
+Every other subsystem with a full spec had a `config/` entry except Notifications. The Notifications spec defines configurable settings (guardian contact, alert frequency) that need a config path.
+
+**Resolution:** Added `config/notifications/` to repo structure spec suggested layout and initial skeleton.
+
+### BV-2: `runtime/updater/staging/` missing from repo structure spec (MEDIUM)
+
+The OTA spec defines `runtime/updater/staging/` with subdirectories (`current/`, `downloaded/`, `manifests/`, `logs/`). The repo structure spec only showed `runtime/updater/schema/`.
+
+**Resolution:** Added `runtime/updater/staging/` to repo structure spec suggested layout and initial skeleton.
+
+### BV-3: On-device path namespace unmapped (HIGH — previously tracked as P2)
+
+Four on-device path families are used across specs with no repo mapping:
+
+| Path Family | Source Specs |
+|-------------|-------------|
+| `/ideal/<module>/` | NextUI Platform Audit |
+| `/userdata/saves/<system>/<game>.*` | Session Manager, Cloud Sync |
+| `/Roms/<SYSTEM>/<game>.*` | Session Manager |
+
+**Status:** Deferred to Sprint 0.3 (NextUI fork integration).
+
+### BV-4: Dual sync queue (previously MB-5)
+
+`runtime/sync/queue/` (Cloud Sync) and `runtime/tasks/queues/sync.json` (Task Scheduler) both claim sync queue data ownership.
+
+**Status:** Deferred to Phase 2/3 implementation.
+
+### BV-5: Shared `tools/migration/` with no naming convention (previously MB-8)
+
+Both OTA Updater and Session Manager claim `tools/migration/` with no way to distinguish whose migrations are whose.
+
+**Status:** Deferred. Recommend prefix convention during implementation.
