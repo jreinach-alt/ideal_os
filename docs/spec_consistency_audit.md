@@ -255,24 +255,24 @@ The following Ideal OS-native modules need to be updatable but have no package d
 
 ---
 
-## Recommended Resolution Order
+## Resolution Status
 
-These are ordered by "blocks the most implementation work":
+Updated 2026-03-11 after P0/P1 fix pass.
 
-| Priority | Action | Blocks |
-|----------|--------|--------|
-| **P0** | Update repo structure spec to include `tasks`, `sync`, `notifications` in `src/`, `runtime/`, `config/` | All work on 3 core modules |
-| **P0** | Standardize `game_id` format across all specs | Session Manager + Cloud Sync integration |
-| **P0** | Standardize `_schema_version` convention (name, type) | Every JSON data file |
-| **P1** | Extract Library data model (game identity, system taxonomy) into a shared contract for Phase 0/1 | Session IDs, Cloud Sync artifacts, OTA migrations |
-| **P1** | Write minimal emulation interface spec (launch, save, load, exit detection) | Session Manager implementation |
-| **P1** | Resolve power-event orchestration: pick one owner, make others registered participants | Session Manager, Task Scheduler, Cloud Sync |
-| **P1** | Define canonical save state file path and who owns it | Session Manager + Cloud Sync |
-| **P1** | Define a common event bus / pub-sub mechanism in `src/common/` | Notification System, Task Scheduler, all event-driven integration |
-| **P2** | Add scheduler integration sections to Cloud Sync, OTA, Session Manager, Notification specs (resolve Cloud Sync "Background Worker" dual-ownership) | Task Scheduler integration |
-| **P2** | Define on-device path mapping (`runtime/X/` → `/ideal/X/` or similar) | All runtime paths |
-| **P2** | Standardize hash field naming convention | Cloud Sync + OTA |
-| **P2** | Write minimal System module spec (power events, device identity, WiFi status) | Multiple modules |
-| **P2** | Add Library Manager and Emulation Layer phases to roadmap | Roadmap completeness |
-| **P3** | Standardize timestamp field names for "last changed" | Cross-module queries |
-| **P3** | Define device identity generation and storage | Cloud Sync + Notifications |
+| Priority | Action | Status | Resolution |
+|----------|--------|--------|------------|
+| **P0** | Update repo structure spec to include `tasks`, `sync`, `notifications` in `src/`, `runtime/`, `config/` | **RESOLVED** | Added to all sections of repo structure spec including packages/ |
+| **P0** | Standardize `game_id` format across all specs | **RESOLVED** | All specs now use `system:game_name` (e.g., `snes:super_metroid`). Codified in CLAUDE.md Data Formats. |
+| **P0** | Standardize `_schema_version` convention (name, type) | **RESOLVED** | All JSON examples updated to `"_schema_version": "1.0"` (underscore-prefixed, string). OTA `schemas` field renamed to `schema_versions` with string values. |
+| **P1** | Extract Library data model (game identity, system taxonomy) into shared contract | **RESOLVED** | `src/common/game_identity.sh` added to Phase 0 Sprint 0.2 in roadmap. Referenced in CLAUDE.md Shared Infrastructure. |
+| **P1** | Write minimal emulation interface spec | **OPEN** | Deferred to pre-Phase-7 work. Emulation Layer now has its own roadmap phase (Phase 7). |
+| **P1** | Resolve power-event orchestration | **RESOLVED** | Task Scheduler is sole orchestrator. Session Manager, Cloud Sync, Notifications are registered participants. Updated in all three specs. |
+| **P1** | Define canonical save state file path | **RESOLVED** | Session Manager references in-place at emulator native paths. No copying. Documented in session spec and CLAUDE.md. |
+| **P1** | Define a common event bus / pub-sub mechanism | **RESOLVED** | File-based event log in `src/common/event_bus.sh`. Events appended to `runtime/events/`. Added to Phase 0 Sprint 0.2 and CLAUDE.md. |
+| **P2** | Add scheduler integration sections to Cloud Sync, OTA, Session Manager, Notification specs | **PARTIALLY RESOLVED** | Cloud Sync shutdown behavior updated to reference scheduler pipeline. Session Manager power hooks updated. Full integration sections deferred to Phase 2 sprints. |
+| **P2** | Define on-device path mapping (`runtime/X/` → `/ideal/X/`) | **OPEN** | Deferred to Sprint 0.3 (NextUI fork integration). |
+| **P2** | Standardize hash field naming convention | **RESOLVED** | All specs use `sha256` as field name. Codified in CLAUDE.md Data Formats. |
+| **P2** | Write minimal System module spec | **OPEN** | Deferred. System module receives power events from NextUI and forwards to Task Scheduler. |
+| **P2** | Add Library Manager and Emulation Layer phases to roadmap | **RESOLVED** | Phase 6 (Library Manager) and Phase 7 (Emulation Layer) added to roadmap. |
+| **P3** | Standardize timestamp field names for "last changed" | **RESOLVED** | All specs use `updated_at`. Codified in CLAUDE.md Data Formats. |
+| **P3** | Define device identity generation and storage | **OPEN** | Deferred to Cloud Sync implementation (Phase 3). |

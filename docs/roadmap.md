@@ -34,7 +34,17 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.2 — NextUI Fork Integration (outline)
+### Sprint 0.2 — Shared Data Contracts (outline)
+
+**Scope (tentative):**
+- Implement `src/common/game_identity.sh` — game_id format (`system:game_name`), system taxonomy, ROM path conventions
+- Implement `src/common/event_bus.sh` — file-based event log (append events to `runtime/events/`, consumers tail/poll)
+- Define event schema: `{"_schema_version": "1.0", "timestamp": "...", "source": "...", "event_type": "...", "payload": {...}}`
+- Unit tests for game identity parsing and event log read/write
+
+---
+
+### Sprint 0.3 — NextUI Fork Integration (outline)
 
 **Scope (tentative):**
 - Clone/integrate NextUI into `upstream/nextui/`
@@ -44,7 +54,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.3 — CI and Code Quality Baseline (outline)
+### Sprint 0.4 — CI and Code Quality Baseline (outline)
 
 **Scope (tentative):**
 - ShellCheck integration for all `.sh` files
@@ -142,21 +152,40 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-## Phase 6 — Launcher Integration
+## Phase 6 — Library Manager
 
-**Goal:** Tie all subsystems together in the user-facing launcher.
+**Goal:** ROM discovery, game identity management, favorites, collections.
 
-### Sprint 6.1 — Session Manager Integration (outline)
-### Sprint 6.2 — Sync Status and Notifications (outline)
-### Sprint 6.3 — OTA Update UI (outline)
+### Sprint 6.1 — ROM Scanner and Game Database (outline)
+### Sprint 6.2 — Favorites, Recents, and Collections (outline)
+### Sprint 6.3 — Search Index (outline)
 
 ---
 
-## Phase 7 — Polish and Public Release
+## Phase 7 — Emulation Layer
 
-### Sprint 7.1 — Performance Optimization (outline)
-### Sprint 7.2 — Documentation and Release Notes (outline)
-### Sprint 7.3 — Release Candidate Testing (outline)
+**Goal:** Wrap NextUI emulator launch path with session and scheduler integration.
+
+### Sprint 7.1 — Launch Orchestration and Core Selection (outline)
+### Sprint 7.2 — Save State and Suspend/Resume Wrappers (outline)
+
+---
+
+## Phase 8 — Launcher Integration
+
+**Goal:** Tie all subsystems together in the user-facing launcher.
+
+### Sprint 8.1 — Session Manager and Library Integration (outline)
+### Sprint 8.2 — Sync Status and Notifications (outline)
+### Sprint 8.3 — OTA Update UI (outline)
+
+---
+
+## Phase 9 — Polish and Public Release
+
+### Sprint 9.1 — Performance Optimization (outline)
+### Sprint 9.2 — Documentation and Release Notes (outline)
+### Sprint 9.3 — Release Candidate Testing (outline)
 
 ---
 

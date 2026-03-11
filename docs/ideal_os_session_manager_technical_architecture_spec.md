@@ -187,11 +187,15 @@ Purpose:
 
 Manage the storage and retrieval of save state artifacts and session metadata.
 
+**Save state file ownership:** Session Manager references emulator save states **in-place** at their native emulator paths (e.g., `/userdata/saves/snes/super_metroid.state`). It does NOT copy save states into its own store. The `state_path` field in session metadata is an absolute path to the emulator's native save location. This ensures Cloud Sync and Session Manager always reference the same file — single source of truth, no stale copies.
+
+Session metadata files (e.g., `metadata.json`, `sessions-index.json`) are owned by the Session Manager and stored under `runtime/sessions/`.
+
 Responsibilities:
 
-- resolve session storage paths
-- write metadata atomically
-- validate presence of required files
+- resolve session storage paths (reference emulator save locations in-place)
+- write session metadata atomically
+- validate presence of referenced save state files
 - load metadata for resume
 
 ---
@@ -250,9 +254,11 @@ Purpose:
 
 Hook suspend logic into sleep, shutdown, and launcher transition events.
 
+**Ownership note:** The Task Scheduler owns the power-event sequence (sleep/shutdown pipeline). Session Manager registers as a **priority participant** — it is always called first in the sequence. Session Manager does not independently listen for OS-level power events; it exposes a `persist_on_power_event()` callback that the scheduler invokes.
+
 Responsibilities:
 
-- auto-save on power event
+- auto-save when called by the scheduler's power-event pipeline
 - coordinate timing with emulator exit/suspend flow
 - avoid duplicate session writes
 
@@ -309,19 +315,19 @@ Example `metadata.json`:
 
 ```json
 {
+  "_schema_version": "1.0",
   "session_id": "snes-a13fd98c-20260310T211455Z",
   "game_id": "snes:super_metroid",
   "display_name": "Super Metroid",
   "system": "snes",
   "core": "snes9x2005_plus",
   "rom_path": "/Roms/SNES/Super Metroid.sfc",
-  "state_path": "state.sav",
+  "state_path": "/userdata/saves/snes/super_metroid.state",
   "status": "suspended",
   "created_at": "2026-03-10T21:14:55Z",
   "updated_at": "2026-03-10T21:26:11Z",
   "last_resumed_at": "2026-03-10T21:20:03Z",
   "resume_count": 2,
-  "schema_version": 1,
   "launcher_context": {
     "last_collection": "recent",
     "last_cursor": "super_metroid"
@@ -352,9 +358,9 @@ Example `sessions-index.json`:
 
 ```json
 {
-  "schema_version": 1,
+  "_schema_version": "1.0",
   "max_sessions": 8,
-  "last_updated": "2026-03-10T21:26:11Z",
+  "updated_at": "2026-03-10T21:26:11Z",
   "sessions": [
     {
       "session_id": "snes-a13fd98c-20260310T211455Z",

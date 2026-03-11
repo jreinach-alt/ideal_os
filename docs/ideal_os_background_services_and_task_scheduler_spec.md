@@ -401,6 +401,7 @@ Example:
 
 ```json
 {
+  "_schema_version": "1.0",
   "task_id": "sync-upload-20260310-001",
   "subsystem": "sync",
   "task_type": "upload_artifact",
@@ -442,6 +443,15 @@ Example:
 ## Power Event Policy
 
 Power events are where scheduler behavior matters most.
+
+**Ownership:** The Task Scheduler is the sole orchestrator of power-event sequences (sleep and shutdown). Other modules (Session Manager, Cloud Sync, Notification System) register as participants with defined priority ordering. They do not independently listen for OS-level power events — the scheduler calls them in sequence and enforces timeouts.
+
+Participant priority order:
+1. **Session Manager** — `persist_on_power_event()` — always first, critical priority
+2. **Cloud Sync** — `flush_on_power_event()` — bounded timeout, skippable
+3. **Notification System** — `record_deferred_warnings()` — fast, non-blocking
+
+The scheduler receives power events from `src/system/` and executes the pipeline. If a participant exceeds its timeout, the scheduler proceeds to the next participant.
 
 ### Sleep Button Pressed
 

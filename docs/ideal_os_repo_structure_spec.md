@@ -146,6 +146,9 @@ src/
 ├── emulation/
 ├── system/
 ├── updater/
+├── tasks/
+├── sync/
+├── notifications/
 └── common/
 ```
 
@@ -157,7 +160,10 @@ Module definitions:
 - `emulation/` → launch orchestration, core selection, runtime wrappers
 - `system/` → power hooks, device integration glue, brightness/volume integration
 - `updater/` → OTA manifest parsing, update checks, package validation, patch apply flow
-- `common/` → shared helpers, logging, config readers, utility code
+- `tasks/` → background task scheduler, queue management, eligibility evaluation, power-event orchestration
+- `sync/` → cloud sync engine, artifact index, change detection, provider adapters
+- `notifications/` → notification policy engine, tier classification, guardian alerts
+- `common/` → shared helpers, logging, config readers, game identity model, event bus, utility code
 
 Rule:
 
@@ -180,7 +186,9 @@ config/
 ├── ui/
 ├── power/
 ├── portmaster/
-└── updater/
+├── updater/
+├── tasks/
+└── sync/
 ```
 
 Examples:
@@ -240,8 +248,15 @@ runtime/
 │   └── schema/
 ├── library/
 │   └── schema/
-└── updater/
-    └── schema/
+├── updater/
+│   └── schema/
+├── tasks/
+│   └── queues/
+├── sync/
+│   └── queue/
+├── notifications/
+│   └── logs/
+└── events/
 ```
 
 Examples:
@@ -275,7 +290,10 @@ packages/
 ├── session-manager/
 ├── library/
 ├── assets/
-└── updater/
+├── updater/
+├── task-scheduler/
+├── cloud-sync/
+└── notifications/
 ```
 
 Why this matters:
@@ -630,7 +648,7 @@ Do not place runtime data examples in arbitrary markdown docs; store schemas und
 
 ### Rule 5
 
-If functionality belongs to launcher, session, library, or updater, place it in that module first unless there is a documented reason not to.
+If functionality belongs to launcher, session, library, emulation, system, updater, tasks, sync, notifications, or common, place it in that module first unless there is a documented reason not to.
 
 ---
 
@@ -656,13 +674,18 @@ ideal-os/
 │   ├── emulation/
 │   ├── system/
 │   ├── updater/
+│   ├── tasks/
+│   ├── sync/
+│   ├── notifications/
 │   └── common/
 ├── config/
 │   ├── emulators/
 │   ├── ui/
 │   ├── power/
 │   ├── portmaster/
-│   └── updater/
+│   ├── updater/
+│   ├── tasks/
+│   └── sync/
 ├── assets/
 │   ├── boot/
 │   ├── branding/
@@ -672,7 +695,11 @@ ideal-os/
 │   ├── filesystem/
 │   ├── sessions/
 │   ├── library/
-│   └── updater/
+│   ├── updater/
+│   ├── tasks/
+│   ├── sync/
+│   ├── notifications/
+│   └── events/
 ├── packages/
 │   ├── base/
 │   ├── launcher/

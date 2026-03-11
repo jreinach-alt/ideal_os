@@ -181,15 +181,16 @@ Example record:
 
 ```
 {
+  "_schema_version": "1.0",
   "artifact_id": "snes:super_metroid:save",
   "artifact_type": "save",
   "system": "snes",
-  "game_id": "super_metroid",
+  "game_id": "snes:super_metroid",
   "local_path": "/userdata/saves/snes/super_metroid.srm",
-  "last_modified": "2026-03-10T21:25:11Z",
+  "updated_at": "2026-03-10T21:25:11Z",
   "last_synced": "2026-03-10T21:24:03Z",
   "device_id": "brick-a",
-  "hash": "sha256..."
+  "sha256": "..."
 }
 ```
 
@@ -235,27 +236,19 @@ Uploads should NOT interrupt gameplay.
 
 # Shutdown Sync Behavior
 
-When the user presses power:
+**Ownership note:** The Task Scheduler owns the power-event pipeline and calls Cloud Sync's `flush_on_power_event()` callback as the second participant (after Session Manager). Cloud Sync does not independently listen for power events. The scheduler enforces the timeout and skip behavior.
 
-If WiFi is available:
+When the scheduler invokes the sync flush callback:
 
-1. check upload queue
-2. attempt fast upload flush
-3. show minimal overlay
+1. Check upload queue
+2. Attempt fast upload flush within scheduler-allocated timeout
+3. Report completion or timeout back to scheduler
 
-Example overlay:
+The scheduler may show a "Syncing saves..." overlay via the Notification System during the flush window. The "B = Skip" behavior is handled by the scheduler's skip policy, not by Cloud Sync directly.
 
-"Syncing saves…"
+Timeout recommendation: 2–5 seconds.
 
-Buttons:
-
-• B = Skip
-
-Timeout recommendation:
-
-2–5 seconds
-
-If uploads complete earlier, shutdown proceeds immediately.
+If uploads complete earlier, the scheduler proceeds immediately.
 
 ---
 

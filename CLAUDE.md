@@ -221,16 +221,34 @@ Examples:
 
 ## Architecture Reference
 
+### Shared Infrastructure (`src/common/`)
+
+These are built in Phase 0 (Sprint 0.2) before any subsystem:
+
+- **Game Identity Model** (`src/common/game_identity.sh`) — `game_id` format is `system:game_name` (e.g., `snes:super_metroid`). Provides system taxonomy, ROM path conventions, and hash generation.
+- **Event Bus** (`src/common/event_bus.sh`) — File-based event log. Modules append JSON events to `runtime/events/`. Consumers tail/poll. Event schema: `{"_schema_version": "1.0", "timestamp": "...", "source": "...", "event_type": "...", "payload": {...}}`.
+- **Atomic Write Helper** (`src/common/atomic_write.sh`) — Write to temp → fsync → rename into place.
+
 ### Core Subsystems (dependency order)
 
 1. **Session Manager** (`src/session/`) — Resume stack, suspend/resume, session persistence
-2. **Background Task Scheduler** (`src/tasks/`) — Coordinates all background work
+2. **Background Task Scheduler** (`src/tasks/`) — Coordinates all background work, owns power-event pipeline
 3. **Cloud Sync Engine** (`src/sync/`) — Save backup, cross-device continuity
 4. **Notification System** (`src/notifications/`) — Tiered alerts, guardian mode
 5. **OTA Updater** (`src/updater/`) — Package-oriented in-place upgrades
-6. **Launcher** (`src/launcher/`) — UI, navigation, game switcher
-7. **Library Manager** (`src/library/`) — ROM discovery, favorites, collections
-8. **Emulation Layer** (`src/emulation/`) — Launch orchestration, core selection
+6. **Library Manager** (`src/library/`) — ROM discovery, favorites, collections
+7. **Emulation Layer** (`src/emulation/`) — Launch orchestration, core selection
+8. **Launcher** (`src/launcher/`) — UI, navigation, game switcher (integration point for all subsystems)
+
+### Architectural Decisions
+
+**Power-event orchestration:** The Task Scheduler is the sole orchestrator of sleep/shutdown sequences. Session Manager, Cloud Sync, and Notification System register as participants with defined priority ordering. They do not independently listen for OS-level power events.
+
+**Save state file ownership:** Session Manager references emulator save states in-place at their native paths (e.g., `/userdata/saves/snes/`). It does NOT copy saves into its own store. Cloud Sync and Session Manager always reference the same file.
+
+**Inter-module events:** All inter-module communication uses the file-based event bus in `src/common/`. Modules emit events (e.g., `session_corrupted`, `sync_upload_failed`); the Notification System and Task Scheduler subscribe by tailing the event log.
+
+**Background work coordination:** The Task Scheduler decides *when* background tasks run. Subsystems (Cloud Sync, OTA, Library) decide *what* needs doing and submit tasks to the scheduler. Cloud Sync's internal upload queue is a task submission queue, not an independent execution engine.
 
 ### Platform Decisions
 
@@ -242,7 +260,11 @@ Examples:
 ### Data Formats
 
 - All metadata, manifests, and configuration use JSON.
+- `game_id` format: `system:game_name` (e.g., `snes:super_metroid`). Always includes the system prefix.
 - Session IDs: `<system>-<game-hash>-<timestamp>` (e.g., `snes-a13fd98c-20260310T211455Z`)
+- `_schema_version`: String type, always present in evolving data files (e.g., `"_schema_version": "1.0"`).
+- Hash fields: Use `sha256` as the field name (e.g., `"sha256": "abc123..."`).
+- Timestamp fields for "last changed": Use `updated_at` consistently across all modules.
 - Atomic file writes: write to temp → fsync → rename into place.
 
 ## Session Startup Protocol

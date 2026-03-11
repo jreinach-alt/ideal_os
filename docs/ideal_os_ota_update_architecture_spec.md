@@ -177,6 +177,7 @@ Example:
 
 ```json
 {
+  "_schema_version": "1.0",
   "channel": "stable",
   "latest_stardate": "2601.1",
   "release_manifest": "2601.1.json"
@@ -198,6 +199,7 @@ Example:
 
 ```json
 {
+  "_schema_version": "1.0",
   "stardate": "2601.1",
   "packages": [
     {
@@ -213,14 +215,14 @@ Example:
       "sha256": "..."
     }
   ],
-  "schemas": {
-    "library": 1,
-    "sessions": 1,
-    "updater": 1
+  "schema_versions": {
+    "library": "1.0",
+    "sessions": "1.0",
+    "updater": "1.0"
   },
   "migrations": [
-    "library-v1",
-    "sessions-v1"
+    "library-v1.0",
+    "sessions-v1.0"
   ],
   "minimum_updater_version": "2601.1"
 }
