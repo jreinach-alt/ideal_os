@@ -596,6 +596,21 @@ These require device-level validation or are scoped to future sprints.
 
 | # | Component | Question | Suggested Sprint |
 |---|-----------|----------|-----------------|
-| 6 | install | Can the boot script be extended for Ideal OS OTA alongside NextUI updates? | 0.4 |
-| 7 | install | What is the exact boot handoff point where Ideal OS takes control? | 0.4 |
 | 10 | platform | What is the exact CPU frequency scaling range and governor behavior on TG5040? | 1.2 |
+
+### Q6: Can the boot script be extended for Ideal OS OTA alongside NextUI updates? — RESOLVED
+
+**Answer: Yes.** See `upstream/nextui/notes/conflict-analysis.md` for full details.
+
+- `.tmp_update/updater` can be replaced with an Ideal OS OTA coordinator that checks for Ideal OS updates first, then falls through to standard NextUI platform dispatch
+- `.pakz` mechanism allows Ideal OS components to be delivered as packages alongside NextUI updates
+- Ideal OS updates use a separate namespace (`.ideal/updates/`) and are independent of `MinUI.zip`
+- Progress UI (`show2.elf` via `/tmp/show2.fifo`) is reusable
+
+### Q7: What is the exact boot handoff point where Ideal OS takes control? — RESOLVED
+
+**Answer: Two handoff points.** See `upstream/nextui/notes/boot-flow-analysis.md` and `conflict-analysis.md` for full details.
+
+- **Install/Update flow:** Handoff at `.tmp_update/updater` — replace with Ideal OS OTA coordinator
+- **Normal boot flow:** Handoff at `MinUI.pak/launch.sh` — replace with Ideal OS-aware launch script that starts subsystems before the NextUI main loop
+- **Lightweight alternative:** `auto.sh` in `.userdata/tg5040/` runs before `nextui.elf` without replacing `launch.sh`, but has limited integration (no game launch interception)
