@@ -67,7 +67,7 @@ All must pass for the sprint to be considered complete.
 
 1. **Component manifest exists:** `upstream/nextui/manifest.md` exists and covers every top-level directory and significant file under `upstream/nextui/src/`.
 2. **Disposition assigned:** Every component in the manifest has a disposition (Keep / Wrap / Branch / Rewrite) that is consistent with the audit matrix. Where the audit matrix doesn't cover a specific file, a reasoned disposition is provided.
-3. **No gaps in workspace coverage:** All directories under `workspace/all/`, `workspace/tg5040/`, `workspace/tg5050/`, and `workspace/desktop/` are documented.
+3. **No gaps in workspace coverage:** All directories under `workspace/all/`, `workspace/tg5040/`, `workspace/tg5050/`, and `workspace/desktop/` are documented. `workspace/_unmaintained/` is documented at summary level (what platforms exist, that they are inactive) but individual legacy platform directories do not require deep analysis.
 4. **Skeleton documented:** The `skeleton/` directory tree is mapped — what each subdirectory contains and how it relates to the runtime filesystem.
 5. **Build system documented:** `upstream/nextui/notes/build-system-analysis.md` describes the makefile structure, cross-compilation toolchain (compiler, flags, targets), build dependencies, and what artifacts are produced.
 6. **Update mechanism documented:** `upstream/nextui/notes/update-mechanism-analysis.md` describes how NextUI currently handles updates — packaging format, delivery mechanism, apply process, and what Ideal OS can reuse vs. must replace.
