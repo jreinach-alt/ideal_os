@@ -54,5 +54,5 @@ After implementation, create `docs/sprints/sprint-X.Y-summary.md` with:
 
 - **Coding standards:** CLAUDE.md "Coding Standards" section
 - **Branch conventions:** CLAUDE.md "Branch and Worktree Convention" section
-- **Repo structure:** `docs/ideal_os_repo_structure_spec.md`
+- **Repo structure:** `docs/architecture/ideal_os_repo_structure_spec.md`
 - **Testing:** `docs/testing.md`

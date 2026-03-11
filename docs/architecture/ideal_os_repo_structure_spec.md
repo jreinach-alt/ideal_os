@@ -1,5 +1,11 @@
 # Ideal OS – Repository Structure Specification
 
+## Spec Metadata
+- **Version:** 1.1
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** Missing `src/tasks/`, `src/sync/`, `src/notifications/` from source layout; missing corresponding `runtime/` and `config/` paths (see consistency audit items RS-1 through RS-3)
+
 ## Purpose
 
 This document defines the canonical repository layout for Ideal OS.

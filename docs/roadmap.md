@@ -68,7 +68,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 **Goal:** Build the core differentiating feature — resume-centric gameplay.
 
-**Reference spec:** `docs/ideal_os_session_manager_technical_architecture_spec.md`
+**Reference spec:** `docs/architecture/ideal_os_session_manager_technical_architecture_spec.md`
 
 ### Sprint 1.1 — Session Data Model and Persistence (outline)
 
@@ -107,7 +107,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 **Goal:** Coordinate all background work so gameplay is never disrupted.
 
-**Reference spec:** `docs/ideal_os_background_services_and_task_scheduler_spec.md`
+**Reference spec:** `docs/architecture/ideal_os_background_services_and_task_scheduler_spec.md`
 
 ### Sprint 2.1 — Core Scheduler (outline)
 ### Sprint 2.2 — Policy Engine and Resource Budgets (outline)
@@ -119,7 +119,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 **Goal:** Automatic save backup and cross-device continuity.
 
-**Reference spec:** `docs/ideal_os_cloud_sync_and_cross_device_continuity_spec.md`
+**Reference spec:** `docs/architecture/ideal_os_cloud_sync_and_cross_device_continuity_spec.md`
 
 ### Sprint 3.1 — Local Sync Engine (outline)
 ### Sprint 3.2 — Cloud Upload (OneDrive/Google Drive) (outline)
@@ -132,7 +132,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 **Goal:** System health communication and family-safe reliability.
 
-**Reference spec:** `docs/ideal_os_notifications_and_guardian_alerts_spec.md`
+**Reference spec:** `docs/architecture/ideal_os_notifications_and_guardian_alerts_spec.md`
 
 ### Sprint 4.1 — Local Notification Engine (outline)
 ### Sprint 4.2 — Guardian Alerts (outline)
@@ -143,7 +143,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 **Goal:** In-place upgrades without SD card reflash.
 
-**Reference spec:** `docs/ideal_os_ota_update_architecture_spec.md`
+**Reference spec:** `docs/architecture/ideal_os_ota_update_architecture_spec.md`
 
 ### Sprint 5.1 — Manifest System and Version Comparison (outline)
 ### Sprint 5.2 — Package Download and Staging (outline)

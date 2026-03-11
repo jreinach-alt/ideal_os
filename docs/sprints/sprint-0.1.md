@@ -27,7 +27,7 @@ Create the canonical directory tree, test harness, and workflow documentation so
 
 ## Reference Specs
 
-- `docs/ideal_os_repo_structure_spec.md` — Initial Folder Skeleton (lines 658-740) and all Suggested Layout sections
+- `docs/architecture/ideal_os_repo_structure_spec.md` — Initial Folder Skeleton (lines 658-740) and all Suggested Layout sections
 - `CLAUDE.md` — Coding standards, testing requirements, session startup protocol
 
 ## Scope

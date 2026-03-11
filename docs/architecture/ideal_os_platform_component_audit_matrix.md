@@ -1,5 +1,11 @@
 # Ideal OS – Platform Component Audit Matrix
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** None
+
 ## Purpose
 
 This document evaluates the major platform components surrounding NextUI against the Ideal OS feature set and architectural goals.

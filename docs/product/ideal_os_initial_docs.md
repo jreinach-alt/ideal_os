@@ -1,5 +1,11 @@
 # Ideal OS – Initial Project Documents
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** None — foundational product document, not expected to change
+
 This document consolidates the **initial design artifacts** for the Ideal OS project so they can be handed off to an implementation agent (Claude Code) and stored in the repository.
 
 ---

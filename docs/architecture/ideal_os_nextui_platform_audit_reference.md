@@ -1,5 +1,11 @@
 # Ideal OS – NextUI Platform Audit Reference
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** None
+
 ## Purpose
 
 This document captures a current-state audit of NextUI as a candidate base platform for Ideal OS.

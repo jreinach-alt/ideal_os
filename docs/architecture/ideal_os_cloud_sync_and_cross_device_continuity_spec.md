@@ -1,5 +1,11 @@
 # Ideal OS – Cloud Sync & Cross‑Device Continuity Specification
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** game_id format mismatch — bare name vs system:name (DF-1); save state file path conflicts with Session Manager (MB-1); dual sync queue with Task Scheduler (MB-5); own Background Worker conflicts with Task Scheduler coordination (DO-8); device_id never defined (DF-6)
+
 ## Purpose
 
 This document defines the architecture and behavior of the **Ideal OS Cloud Sync system**.

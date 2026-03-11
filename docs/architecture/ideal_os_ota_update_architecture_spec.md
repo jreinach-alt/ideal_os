@@ -1,5 +1,11 @@
 # Ideal OS – OTA Update Architecture Specification
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** schema_version convention conflicts with CLAUDE.md (DF-2); schema migration ownership split with Session Manager (MB-8); hash field naming divergence (DF-4)
+
 ## Purpose
 
 This document defines the architecture for the Ideal OS OTA update system.

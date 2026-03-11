@@ -34,7 +34,7 @@ One sentence describing what this sprint achieves and why it matters.
 ## Reference Specs
 
 - List the design documents this sprint implements from
-- e.g., `docs/ideal_os_session_manager_technical_architecture_spec.md`, sections X-Y
+- e.g., `docs/architecture/ideal_os_session_manager_technical_architecture_spec.md`, sections X-Y
 
 ## Scope
 

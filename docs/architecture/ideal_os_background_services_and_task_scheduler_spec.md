@@ -1,5 +1,11 @@
 # Ideal OS – Background Services and Task Scheduler Specification
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** Power event orchestration ownership vs Session Manager and Cloud Sync (MB-2); no other spec acknowledges the scheduler (MB-4); dual sync queue with Cloud Sync (MB-5); boot flow ownership (MB-7); forward-dependency on Notification System (DO-9)
+
 ## Purpose
 
 This document defines how Ideal OS manages background activity across core subsystems.

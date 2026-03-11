@@ -1,5 +1,11 @@
 # Ideal OS – Session Manager Technical Architecture Specification
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** Save state file paths conflict with Cloud Sync (MB-1); power event orchestration ownership (MB-2); game launch orchestration unowned (MB-3); `game_id` format mismatch (DF-1); `schema_version` convention (DF-2); emulation API dependency undefined (DO-2)
+
 ## Purpose
 
 This document defines the technical architecture for the Ideal OS Session Manager.

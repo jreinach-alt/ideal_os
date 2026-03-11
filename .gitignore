@@ -1,6 +1,9 @@
 # Build and release artifacts
 release/artifacts/
 
+# Ephemeral working artifacts (reviews, audits, scratch notes)
+work/
+
 # Temporary files
 tmp/
 *.tmp

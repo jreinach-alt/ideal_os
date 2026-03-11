@@ -1,5 +1,11 @@
 # Ideal OS – Notification, Guardian Alerts, and Family‑Safe Reliability Specification
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** Expects events from modules that do not define them (DO-5); Cloud Sync bypasses notification architecture with own overlay (MB-9); device_id/nickname referenced but undefined (DF-6)
+
 ## Purpose
 
 This document defines the **notification model, guardian alert system, and family‑safe reliability behavior** for Ideal OS.

@@ -1,5 +1,11 @@
 # Ideal OS – Base Platform Fork and Harvest Plan
 
+## Spec Metadata
+- **Version:** 1.0
+- **Last reviewed:** Sprint 0.1
+- **Status:** active
+- **Sections with known open questions:** None
+
 ## Purpose
 
 This document defines how the Ideal OS project will establish its initial codebase by **forking an existing platform** and selectively harvesting useful components from related projects.

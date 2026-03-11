@@ -9,7 +9,7 @@ Versioning: Stardate format `YYMM.R` (e.g., Stardate 2601.1)
 
 ## Repository Structure Contract
 
-The canonical layout is defined in `docs/ideal_os_repo_structure_spec.md`. That document is the binding authority on where files go.
+The canonical layout is defined in `docs/architecture/ideal_os_repo_structure_spec.md`. That document is the binding authority on where files go.
 
 ### Strict Rules
 
