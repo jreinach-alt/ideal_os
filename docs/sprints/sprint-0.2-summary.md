@@ -31,5 +31,5 @@
 | (None) | Spec was followed exactly. |
 
 ## Open Items
-- ShellCheck reports SC2317 (info) on the double-source guard pattern (`return 0 2>/dev/null || true`) in all 3 modules. This is a false positive — the pattern is correct for files that are sourced, not executed. No action needed.
+- Source guard pattern simplified from `return 0 2>/dev/null || true` (with SC2317 disable) to plain `return 0`. These are library files only ever sourced, so the `|| true` fallback for direct execution was unnecessary and triggered ShellCheck SC2317.
 - `busybox fsync` is not available in the dev environment. The `atomic_write.sh` fallback to `sync` is exercised in all tests. On-device testing will verify the `fsync` path.

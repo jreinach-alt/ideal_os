@@ -5,10 +5,9 @@ set -e
 # Write to temp file → fsync → rename into place.
 # Ensures readers never see partial content at the destination path.
 
-# Guard against double-sourcing (return exits when sourced; || true handles direct execution)
+# Guard against double-sourcing
 if [ -n "$_ATOMIC_WRITE_LOADED" ]; then
-    # shellcheck disable=SC2317
-    return 0 2>/dev/null || true
+    return 0
 fi
 readonly _ATOMIC_WRITE_LOADED=1
 

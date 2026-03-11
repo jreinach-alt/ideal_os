@@ -5,10 +5,9 @@ set -e
 # Provides game_id format (system:game_name), system taxonomy,
 # ROM/save path conventions, and hash generation.
 
-# Guard against double-sourcing (return exits when sourced; || true handles direct execution)
+# Guard against double-sourcing
 if [ -n "$_GAME_IDENTITY_LOADED" ]; then
-    # shellcheck disable=SC2317
-    return 0 2>/dev/null || true
+    return 0
 fi
 readonly _GAME_IDENTITY_LOADED=1
 
