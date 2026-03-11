@@ -8,10 +8,11 @@ Phase 0 — Foundation
 
 <!-- The orchestrator or user sets this date when the spec is approved. -->
 <!-- Agents MUST NOT begin implementation until this field contains a date. -->
+2026-03-11
 
 ## Status
 
-`not-started`
+`approved`
 
 Status definitions:
 - `not-started` — Spec is being drafted or under review. No implementation allowed.
