@@ -5,8 +5,9 @@ set -e
 # Append-only JSONL event log. Modules emit events; consumers tail/poll.
 # No jq dependency — JSON constructed and parsed with printf/grep/sed.
 
-# Guard against double-sourcing
+# Guard against double-sourcing (return exits when sourced; || true handles direct execution)
 if [ -n "$_EVENT_BUS_LOADED" ]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || true
 fi
 readonly _EVENT_BUS_LOADED=1
