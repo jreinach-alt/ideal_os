@@ -104,18 +104,29 @@ This manifest documents every major directory and significant file in the NextUI
 #### `workspace/all/nextui/` — Main Launcher
 
 **Purpose:** Primary UI shell — game browsing, selection, launching, resume stack, quick menu, game switcher.
-**Key files:** `nextui.c` (103KB), `Makefile`
+**Key files:** `nextui.c` (3362 lines, 103KB), `Makefile`
 **Disposition:** Branch
 **Rationale:** Too central to use as-is. Ideal OS needs session-aware UI, resume stack integration, notification display, and sync status. Will be branched and incrementally modified.
-**Open questions:** How is the game list populated (filesystem scan vs. database)? How does the resume stack work internally? What UI rendering framework is used (appears to be custom SDL2)?
+**Internals (see Resolved Questions Q1-Q3 for details):**
+- **Game list:** Filesystem scan of `/Roms/` with optional `map.txt` aliasing. No database — rebuilt from disk every session.
+- **Resume/recents:** File-based — `recent.txt` (24 entries max), save slot files for resume detection, `auto_resume.txt` for crash recovery.
+- **Rendering:** SDL2 software rendering via `GFX_*()` wrappers. Three async worker threads (background loader, thumbnail loader, animation). Dirty-rect optimization, ~60 FPS with v-sync.
+- **Game launch:** Adds to recents → writes resume slot to `/tmp/resume_slot.txt` → queues emulator command → exits launcher. Emulator is a separate process.
+- **Navigation:** Directory stack model. Push on enter, pop on back. Alphabetic jump via L1/R1.
 
 #### `workspace/all/minarch/` — Emulator Runtime Engine
 
 **Purpose:** Minimal libretro front-end. Handles core loading, rendering, audio, input mapping, rewind, fast-forward, RetroAchievements, in-game quick menu, and CHD disc image support.
-**Key files:** `minarch.c` (272KB), `chd_reader.c/h`, `ra_integration.c/h`, `ra_consoles.h`, `rcheevos/` (RetroAchievements library), `libchdr.makefile`, `rcheevos.makefile`
+**Key files:** `minarch.c` (9209 lines, 272KB), `chd_reader.c/h`, `ra_integration.c/h`, `ra_consoles.h`, `rcheevos/` (RetroAchievements library), `libchdr.makefile`, `rcheevos.makefile`
 **Disposition:** Wrap
 **Rationale:** Core emulation engine is stable and feature-rich. Ideal OS wraps the launch path to hook session creation, suspend/resume, and gameplay policies. No need to modify the emulation internals.
-**Open questions:** What save state format does minarch use? How does the rewind buffer interact with suspend/resume?
+**Internals (see Resolved Questions Q4-Q5 for details):**
+- **Save states:** Multiple formats (default `.st0`–`.st8`). Raw libretro serialization, optional RASTATE header. Slot 9 is auto-resume (saved on exit, loaded on next launch via `/tmp/resume_slot.txt`).
+- **SRAM:** `Saves/<System>/Game.sav` — written on game exit only. No intermediate checkpointing.
+- **Rewind:** In-memory circular buffer (default 64MB), LZ4-compressed delta encoding. Does NOT survive suspend/resume — buffer cleared on state load/save/exit.
+- **Launch protocol:** `minarch <core.so> <rom.path>`. Core loaded via `dlopen()`. ROM auto-extracted from zip to `/tmp/nextarch/<tag>/` if needed.
+- **RetroAchievements:** rcheevos client, per-frame evaluation. Hardcore mode blocks save states. Can be fully disabled via settings.
+- **Quick menu:** MENU button → pause emulation → save/load/options/quit overlay.
 
 #### `workspace/all/common/` — Shared Libraries
 
@@ -507,19 +518,84 @@ The skeleton directory defines the complete on-device directory structure. It is
 
 ---
 
-## Open Questions Summary
+## Resolved Questions
 
-These items cannot be confidently resolved from source reading alone and require device-level validation or further analysis in future sprints.
+These were originally flagged as open questions and have been resolved through source analysis.
+
+### Q1: How is the game list populated? — RESOLVED
+
+**Answer: Filesystem scan with optional `map.txt` aliasing. No database.**
+
+`getRoms()` scans `/Roms/` using `opendir()`/`readdir()`. Each system directory is checked for ROM files and a matching emulator PAK. Optional `map.txt` files (tab-separated `filename<TAB>Display Name`) provide display name overrides. All data is in-memory per session — reconstructed from filesystem on every launcher start. No caching or database.
+
+**Key data structure:** `Entry { path, name, unique, type, alpha }` stored in `Array*` within each `Directory` on a navigation stack.
+
+### Q2: How does the existing resume/recent stack work? — RESOLVED
+
+**Answer: Dual-layer file-based with in-memory caching.**
+
+- **Recent games:** `/Roms/.userdata/shared/.minui/recent.txt` — text file, one path per line (optional tab-separated alias). Max 24 entries. Loaded into memory on startup; saved after each game launch. Newest entry always at index 0.
+- **Resume state detection:** Launcher checks for save slot file (`/.userdata/shared/.minui/<EMU>/<romname>.txt`) and preview BMP (`<romname>.<slot>.bmp`). If both exist, "X RESUME" button hint appears.
+- **Auto-resume:** `auto_resume.txt` stores a game path for auto-launch on next boot (used after crash/forced restart).
+- **Game Switcher:** Carousel overlay showing top 8-12 recent games with save previews. Transient state via `game_switcher.txt` marker file.
+- **Last position:** `/tmp/last.txt` stores cursor position and navigation stack for restoring UI state after returning from a game.
+
+### Q3: What UI rendering framework is used? — RESOLVED
+
+**Answer: SDL2 with custom software rendering. No GPU acceleration in the launcher UI.**
+
+- `GFX_*()` functions from `api.h` wrap SDL2 surface operations (software blit, not OpenGL).
+- Image loading via `SDL_image` (`IMG_Load`), font rendering via `SDL_ttf`.
+- Layer-based composition with dirty-rect optimization — only redraws when `dirty = 1`.
+- Three worker threads for async loading: background images, game thumbnails, pill selector animation.
+- V-sync at ~60 FPS. Menu transitions use 150-200ms slide animations.
+
+**Note:** The emulator (minarch) uses OpenGL ES for rendering. Only the launcher UI is software-rendered.
+
+### Q4: What save state format does minarch use? — RESOLVED
+
+**Answer: Multiple selectable formats. Default is MinUI-style `.st0`–`.st8`.**
+
+- **Default (STATE_FORMAT_SAV):** `Game.st0` through `Game.st8` in `/.userdata/<platform>/<system>-<core>/`
+- **RetroArch compat:** `Game.state.0` (extra dot) or `Game.state0` (no dot), compressed or uncompressed variants
+- **File contents:** Raw libretro `core.serialize()` output. Optional RASTATE 16-byte header when compressed.
+- **Slots:** 0-7 are user slots (displayed as 1-8 in UI). Slot 8 is MiniUI compat. **Slot 9 is AUTO_RESUME_SLOT** — auto-saved on game exit, loaded on next launch via `/tmp/resume_slot.txt`.
+- **SRAM (battery saves):** Separate from save states. Stored at `Saves/<System>/Game.sav` (or `.srm`). Written on game exit only — no intermediate checkpointing.
+
+### Q5: How does the rewind buffer interact with suspend/resume? — RESOLVED
+
+**Answer: Rewind buffer is in-memory only and does NOT survive suspend/resume.**
+
+- **Buffer:** Circular ring buffer (configurable, default 64MB, max 256MB). Delta-encoded (XOR previous state) + LZ4 compression. Captures every N frames (default 16).
+- **On state load/save:** `Rewind_on_state_change()` → `Rewind_reset()` — entire buffer cleared and re-seeded with current state.
+- **On suspend:** Auto-save to slot 9, rewind buffer freed. On resume: new empty buffer created.
+- **On core reset:** Buffer cleared.
+- **During menu pause:** Buffer is NOT updated (core doesn't run), but buffer contents survive — rewind continues on menu close.
+
+### Q8: Does the updater check signatures or integrity? — RESOLVED
+
+**Answer: No. Zero integrity verification of any kind.**
+
+The updater script and both platform boot scripts (tg5040, tg5050) unconditionally extract `MinUI.zip` with `unzip -o` and delete it. No SHA256, MD5, GPG, checksum, or signature checks anywhere in the update pipeline. Grep for all verification-related terms across all update scripts yields zero results.
+
+### Q9: Are binaries stripped? — RESOLVED
+
+**Answer: Partially. Some libraries explicitly stripped; core binaries are not.**
+
+- **Explicitly stripped** (`-s` in LDFLAGS): libbatmondb, libgametimedb, show2, syncsettings
+- **Not explicitly stripped**: nextui.elf, minarch.elf, keymon.elf, settings, batmon
+- **Debug symbols**: Only available when building with `GPERFTOOLS=1` (adds `-g`). Default builds have no `-g`.
+- **Optimization**: All platforms use `-O3 -Ofast -fomit-frame-pointer` — aggressive optimization but not stripping.
+- **No global NDEBUG**: Assertions remain in non-profiling builds.
+
+---
+
+## Remaining Open Questions
+
+These require device-level validation or are scoped to future sprints.
 
 | # | Component | Question | Suggested Sprint |
 |---|-----------|----------|-----------------|
-| 1 | nextui | How is the game list populated — filesystem scan, database, or hybrid? | 0.5 |
-| 2 | nextui | How does the existing resume stack work internally? Is it file-based or in-memory? | 0.5 |
-| 3 | nextui | What UI rendering framework is used — appears to be custom SDL2 but needs confirmation | 0.5 |
-| 4 | minarch | What save state format does minarch use (RetroArch `.st0` or custom)? | 0.5 |
-| 5 | minarch | How does the rewind buffer interact with suspend/resume? | 0.5 |
 | 6 | install | Can the boot script be extended for Ideal OS OTA alongside NextUI updates? | 0.4 |
 | 7 | install | What is the exact boot handoff point where Ideal OS takes control? | 0.4 |
-| 8 | skeleton/BOOT | Does the updater binary check signatures or perform any integrity verification? | 0.4 |
-| 9 | skeleton/SYSTEM | At runtime, are binaries in `bin/` stripped? What debug symbols are available? | 1.1 |
 | 10 | platform | What is the exact CPU frequency scaling range and governor behavior on TG5040? | 1.2 |
