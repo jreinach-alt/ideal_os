@@ -55,6 +55,7 @@ Implement the three shared infrastructure modules (`game_identity.sh`, `event_bu
 
 | Action | Path | Description |
 |--------|------|-------------|
+| Create | `tests/unit/common/` | Test directory for common module unit tests |
 | Create | `src/common/game_identity.sh` | Game ID model: parse, validate, path helpers, hash |
 | Create | `src/common/event_bus.sh` | File-based event bus: emit, read, validate |
 | Create | `src/common/atomic_write.sh` | Atomic file write helper |
@@ -100,7 +101,7 @@ The taxonomy is a flat newline-delimited string (no arrays — BusyBox ash).
 - System names are always lowercase in game IDs (`snes`, not `SNES`).
 - ROM directory uses uppercase system name (NextUI convention: `/Roms/SNES/`).
 - `game_id_hash` uses `sha256sum` (coreutils) or `busybox sha256sum`. Falls back with error if neither is available.
-- Game names must not contain colons (validated by `game_id_validate`).
+- Game names may contain any characters except colons (validated by `game_id_validate`). No character whitelist — ROM-derived names will have spaces, dots, parentheses, etc.
 
 ---
 

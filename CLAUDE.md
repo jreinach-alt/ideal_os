@@ -282,6 +282,9 @@ Ensure required tools are available. Install if missing:
 ```sh
 # BusyBox ash — required for on-target shell compatibility testing
 busybox ash -c 'echo ok' 2>/dev/null || apt-get install -y busybox-static
+
+# ShellCheck — required for shell script linting
+command -v shellcheck >/dev/null 2>&1 || apt-get install -y shellcheck
 ```
 
 All shell scripts target BusyBox ash. Tests must pass under `busybox ash`, not just bash or dash.
