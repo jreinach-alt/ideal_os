@@ -17,9 +17,9 @@ Phase 0 — Foundation
 Status definitions:
 - `not-started` — Spec is being drafted or under review. No implementation allowed.
 - `approved` — Spec is locked and approved for implementation. Set the Approved date above.
-- `in-progress` — Coding agent is actively implementing.
-- `qa-review` — Implementation complete. QA agent is validating.
-- `complete` — All acceptance criteria met, QA passed, merged.
+- `in-progress` — Actively implementing.
+- `validation` — Implementation complete. Running acceptance criteria checks.
+- `complete` — All acceptance criteria met, validated, merged.
 
 ## Goal
 
@@ -36,6 +36,7 @@ Create the canonical directory tree, test harness, and workflow documentation so
 
 - [ ] Create the full canonical directory tree (all directories from the repo structure spec, including subdirectories from Suggested Layout sections)
 - [ ] Add `.gitkeep` files in all leaf directories to preserve empty structure in git
+- [ ] Create `LICENSE` (MIT license)
 - [ ] Create `README.md` at repo root (project overview stub)
 - [ ] Create `.gitignore` (ignore build outputs, temp files, release artifacts)
 - [ ] Implement `scripts/test.sh` — POSIX sh test runner compatible with BusyBox ash
@@ -49,13 +50,13 @@ Create the canonical directory tree, test harness, and workflow documentation so
 - ShellCheck integration (Sprint 0.4)
 - GitHub Actions CI (Sprint 0.4)
 - NextUI fork integration (Sprint 0.3)
-- `LICENSE` file (deferred — license choice not yet made)
 - Any content inside module directories beyond `.gitkeep`
 
 ## Files to Create or Modify
 
 | Action | Path | Description |
 |--------|------|-------------|
+| Create | `LICENSE` | MIT license |
 | Create | `README.md` | Project overview stub — name, one-line description, pointer to docs/ |
 | Create | `.gitignore` | Ignore release/artifacts/, tmp/, *.swp, .DS_Store |
 | Create | `scripts/test.sh` | Test runner — discovers and executes tests, reports pass/fail |
@@ -214,6 +215,7 @@ All must pass for the sprint to be considered complete.
 8. **BusyBox syntax clean:** `busybox ash -n scripts/test.sh` and `busybox ash -n tests/unit/scaffold/test_directory_tree.sh` report no syntax errors.
 9. **README exists:** `README.md` exists at repo root with project name and description.
 10. **Gitignore exists:** `.gitignore` exists and covers at minimum `release/artifacts/` and common temp file patterns.
+11. **License exists:** `LICENSE` contains the MIT license text.
 
 ## Test Plan
 
@@ -233,11 +235,11 @@ All must pass for the sprint to be considered complete.
 
 - None. This is the first sprint.
 
-## QA Checklist
+## Validation Checklist
 
-The QA agent validates these after implementation:
+Run after implementation to confirm the sprint is complete:
 
-- [ ] All acceptance criteria met (AC 1-10)
+- [ ] All acceptance criteria met (AC 1-11)
 - [ ] All automated tests pass under `busybox ash`
 - [ ] No files created outside paths listed in the Files table and Directory Tree
 - [ ] No unrelated changes included
@@ -245,14 +247,9 @@ The QA agent validates these after implementation:
 - [ ] Code follows coding standards in CLAUDE.md (POSIX sh, `set -e`, quoted variables, `printf` over `echo`)
 - [ ] `busybox ash -n` passes on all `.sh` files
 
-## Defects
-
-(None yet — QA agent appends defects here after validation.)
-
 ## Notes
 
 - **Shell target:** BusyBox ash, not bash. The dev environment has `busybox ash` installed via `busybox-static`.
 - **Directory depth:** The tree includes all subdirectories from the Suggested Layout sections in the repo structure spec, not just the top-level Initial Folder Skeleton. This was a deliberate decision from the pre-flight check — creating all subdirs now prevents future sprints from having to create parent directories.
 - **agent-workflow.md boundary:** This doc is a concise operational quick-reference for how to run a sprint. It is NOT a duplicate of CLAUDE.md. It covers: the sprint lifecycle steps, who does what, handoff points, and links to CLAUDE.md for coding standards, escalation rules, and branch conventions.
-- **No LICENSE file:** License choice has not been made. Deferred intentionally.
 - **Test discovery pattern:** Uses `find` with `-name 'test_*.sh'` rather than globbing, since BusyBox `find` is reliable and recursive globs are not portable.
