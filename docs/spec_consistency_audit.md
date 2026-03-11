@@ -188,11 +188,23 @@ Neither source spec defines these event interfaces.
 
 CLAUDE.md lists them at build positions 7 and 8. The roadmap's Phase 6 is "Launcher Integration" and Phase 7 is "Polish." Library and Emulation have no dedicated implementation phases.
 
-### DO-7: Task Scheduler forward-depends on Notification System (LOW)
+### DO-7: No event bus or pub-sub infrastructure exists anywhere (MEDIUM-HIGH)
+
+The Notification spec (lines 240-267) assumes it can subscribe to events from Cloud Sync and Session Manager. The Task Scheduler (lines 480-493) assumes event subscription for escalation hooks. Neither Cloud Sync nor Session Manager defines an event emission or subscription mechanism. This implies a **missing foundational infrastructure component** — a common event bus or pub-sub system in `src/common/` — that no spec, roadmap phase, or sprint addresses.
+
+Without this infrastructure, the Notification System has no events to classify, the Task Scheduler cannot receive subsystem-originated task requests, and Cloud Sync cannot receive session lifecycle events for Tier 3 artifacts.
+
+### DO-8: Cloud Sync describes its own "Background Worker" that conflicts with Task Scheduler (MEDIUM)
+
+Cloud Sync (line 166) defines a "Background Worker" as an internal architecture component with its own upload queue at `runtime/sync/queue/`. The Task Scheduler (lines 69-76) explicitly claims Cloud Sync as a managed subsystem: "the Sync Manager decides *what* needs upload; the scheduler decides *when* upload may run."
+
+The Cloud Sync spec never mentions the Task Scheduler. It describes its own independent background worker with its own queue, shutdown flush behavior, and timing constraints. This creates ambiguity about whether sync background work is self-managed or scheduler-managed.
+
+### DO-9: Task Scheduler forward-depends on Notification System (LOW)
 
 Task Scheduler (position 2) needs Notification System (position 4) for escalation hooks. Mitigated by the scheduler's internal phasing deferring notification integration to its Phase 3.
 
-### DO-8: No circular dependencies found
+### DO-10: No circular dependencies found
 
 This is a positive finding. Despite the gaps above, no A→B→A cycles exist.
 
@@ -256,11 +268,11 @@ These are ordered by "blocks the most implementation work":
 | **P1** | Write minimal emulation interface spec (launch, save, load, exit detection) | Session Manager implementation |
 | **P1** | Resolve power-event orchestration: pick one owner, make others registered participants | Session Manager, Task Scheduler, Cloud Sync |
 | **P1** | Define canonical save state file path and who owns it | Session Manager + Cloud Sync |
-| **P2** | Add scheduler integration sections to Cloud Sync, OTA, Session Manager, Notification specs | Task Scheduler integration |
+| **P1** | Define a common event bus / pub-sub mechanism in `src/common/` | Notification System, Task Scheduler, all event-driven integration |
+| **P2** | Add scheduler integration sections to Cloud Sync, OTA, Session Manager, Notification specs (resolve Cloud Sync "Background Worker" dual-ownership) | Task Scheduler integration |
 | **P2** | Define on-device path mapping (`runtime/X/` → `/ideal/X/` or similar) | All runtime paths |
 | **P2** | Standardize hash field naming convention | Cloud Sync + OTA |
 | **P2** | Write minimal System module spec (power events, device identity, WiFi status) | Multiple modules |
 | **P2** | Add Library Manager and Emulation Layer phases to roadmap | Roadmap completeness |
 | **P3** | Standardize timestamp field names for "last changed" | Cross-module queries |
-| **P3** | Define event emission interfaces in Session Manager and Cloud Sync specs | Notification System |
 | **P3** | Define device identity generation and storage | Cloud Sync + Notifications |
