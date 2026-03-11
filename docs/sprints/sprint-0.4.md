@@ -17,8 +17,8 @@ Phase 0 — Foundation
 Status definitions:
 - `not-started` — Spec is being drafted or under review. No implementation allowed.
 - `approved` — Spec is locked and approved for implementation. Set the Approved date above.
-- `in-progress` — Coding agent is actively implementing.
-- `complete` — All acceptance criteria met and verified.
+- `in-progress` — Actively being implemented.
+- `complete` — All acceptance criteria met.
 
 ## Goal
 
@@ -37,12 +37,12 @@ Produce a complete trace of both NextUI boot flows (first-boot/install and norma
 
 ### In Scope
 
-- [ ] Trace the **first-boot/install flow**: from SD card insertion through `.tmp_update/updater` → platform detection → `.pakz` processing → `MinUI.zip` extraction → `install.sh` migration → first `launch.sh` run → forced power-off
-- [ ] Trace the **normal boot flow**: from power-on through `launch.sh` → hardware init → daemon startup → WiFi/BT → `auto.sh` → `nextui.elf` main loop → suspend/resume/poweroff handling
+- [ ] Trace the **first-boot/install flow**: from SD card insertion through `.tmp_update/updater` → platform detection → `.pakz` processing → extraction → migration → first boot → forced power-off
+- [ ] Trace the **normal boot flow**: from power-on through `main.sh` / `runtrimui.sh` → hardware init → daemon startup → `nextui.elf` (MainUI) main loop → suspend/resume/poweroff handling
 - [ ] Document every script, binary, and config file touched in each flow — with file paths, execution order, and what each does
 - [ ] Identify **Ideal OS hook points** in each flow:
   - First-boot: OTA package staging, integrity verification, migration framework
-  - Normal boot: boot animation, session resume check, launcher handoff, `auto.sh` replacement, power event integration
+  - Normal boot: boot animation, session resume check, launcher handoff, power event integration
 - [ ] Analyze **conflict zones** — NextUI subsystems that overlap with Ideal OS goals:
   - `.system/` folder: runtime layout, what lives there, how Ideal OS extends or replaces it
   - PAK store / Tools: how PAKs are discovered, launched, and managed; wrapping strategy
@@ -50,7 +50,7 @@ Produce a complete trace of both NextUI boot flows (first-boot/install and norma
   - Updater: how the install/update flow maps to Ideal OS OTA
   - Launcher (`nextui.elf`): how it's started, what it controls, where Ideal OS intercepts
 - [ ] Define the **integration boundary**: a clear line showing where NextUI platform layer ends and Ideal OS core services begin, with file-level specificity
-- [ ] Resolve remaining open questions from Sprint 0.3: Q6 (`.system/` runtime behavior), Q7 (settings persistence format), Q10 (PAK store wrapping feasibility)
+- [ ] Resolve remaining open questions from Sprint 0.3: Q6 (boot script extension for OTA), Q7 (boot handoff point)
 - [ ] Produce `upstream/nextui/notes/boot-flow-analysis.md`
 - [ ] Produce `upstream/nextui/notes/conflict-analysis.md`
 
@@ -81,7 +81,7 @@ All must pass for the sprint to be considered complete.
 4. **Hook points identified:** Each flow has a "Hook Points" subsection listing specific locations where Ideal OS can inject behavior, with the file path, the mechanism (e.g., script replacement, wrapper, pre/post hook), and what Ideal OS feature it enables.
 5. **Conflict zones analyzed:** `conflict-analysis.md` covers at minimum: `.system/` folder, PAK store, settings persistence, updater, and launcher. Each zone has: what NextUI does, what Ideal OS needs, the specific wrap/replace strategy, and affected files.
 6. **Integration boundary defined:** `conflict-analysis.md` includes a clear boundary table or diagram showing which files/subsystems belong to the NextUI platform layer vs. Ideal OS core services.
-7. **Open questions resolved:** Sprint 0.3 open questions Q6, Q7, and Q10 are answered in the conflict analysis (or explicitly flagged as requiring device validation with an explanation of what was learned).
+7. **Open questions resolved:** Sprint 0.3 open questions Q6 and Q7 are answered in the conflict analysis (or explicitly flagged as requiring device validation with an explanation of what was learned).
 8. **No source modifications:** Zero changes to any file under `upstream/nextui/src/`. This sprint is read-only against the NextUI source.
 
 ## Test Plan
@@ -99,7 +99,7 @@ This sprint produces only documentation — no code. No automated tests are requ
 | Hook point specificity | Each hook point references a concrete file path and mechanism | AC 4 |
 | Conflict zone coverage | Verify all 5 required zones are present in conflict analysis | AC 5 |
 | Boundary clarity | Integration boundary table exists with file-level entries | AC 6 |
-| Open question resolution | Q6, Q7, Q10 from manifest are addressed | AC 7 |
+| Open question resolution | Q6, Q7 from manifest are addressed | AC 7 |
 | No source modifications | `git diff upstream/nextui/src/` shows no changes | AC 8 |
 
 ### Manual Validation (if device-dependent)
@@ -112,18 +112,6 @@ This sprint produces only documentation — no code. No automated tests are requ
 - Sprint 0.2 (shared data contracts) — Complete
 - Sprint 0.3 (component manifest, update mechanism analysis) — Complete
 - NextUI source present in `upstream/nextui/src/` — Complete (verified)
-
-## QA Checklist
-
-The QA agent validates these after implementation:
-
-- [ ] All acceptance criteria met
-- [ ] No files created outside specified paths
-- [ ] No unrelated changes included
-- [ ] Commit messages follow format in CLAUDE.md
-- [ ] Boot flow analysis covers both flows completely
-- [ ] Conflict analysis addresses all 5 required zones
-- [ ] Open questions from Sprint 0.3 are resolved or explicitly deferred with rationale
 
 ## Deliverable Details
 
@@ -184,6 +172,6 @@ Q6, Q7, Q10 from Sprint 0.3 — findings and conclusions
 
 - This sprint has no code deliverables and no automated tests. The "implementation" is structured analysis and documentation.
 - The first-boot flow doubles as the update flow — same mechanism, same entry point. The analysis should make this explicit since it directly informs Ideal OS OTA design.
-- The `auto.sh` hook in the normal boot flow is particularly interesting as a potential Ideal OS injection point — analyze what it can and cannot do.
-- `launch.sh` is the most critical file — it's the bridge between both flows and the normal boot entry point. Give it thorough treatment.
+- The actual boot entry points are `main.sh` and `runtrimui.sh` in `skeleton/BOOT/trimui/app/`, not `launch.sh` or `auto.sh` (those names came from MinUI/CrossMix conventions and don't exist in the NextUI source). The analysis must trace from what actually exists.
+- `main.sh` / `runtrimui.sh` are the most critical files — they're the bridge between both flows and the normal boot entry point. Give them thorough treatment.
 - Device-dependent questions should be flagged for Sprint 1.2 (First Boot and Smoke Test) validation.
