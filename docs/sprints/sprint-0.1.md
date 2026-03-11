@@ -8,7 +8,7 @@ Phase 0 — Foundation
 
 <!-- The orchestrator or user sets this date when the spec is approved. -->
 <!-- Agents MUST NOT begin implementation until this field contains a date. -->
-**Not yet approved**
+**Approved**
 
 ## Status
 
