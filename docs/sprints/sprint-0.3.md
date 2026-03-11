@@ -12,7 +12,7 @@ Phase 0 — Foundation
 
 ## Status
 
-`approved`
+`in-progress`
 
 Status definitions:
 - `not-started` — Spec is being drafted or under review. No implementation allowed.
