@@ -17,9 +17,8 @@ Phase 0 — Foundation
 Status definitions:
 - `not-started` — Spec is being drafted or under review. No implementation allowed.
 - `approved` — Spec is locked and approved for implementation. Set the Approved date above.
-- `in-progress` — Coding agent is actively implementing.
-- `qa-review` — Implementation complete. QA agent is validating.
-- `complete` — All acceptance criteria met, QA passed, merged.
+- `in-progress` — Actively implementing.
+- `complete` — All acceptance criteria met and verified.
 
 ## Goal
 
@@ -137,26 +136,9 @@ Should cover:
 - What parts of the existing updater code live in the source tree
 - Reuse assessment — what Ideal OS can build on vs. what needs replacing
 
-## QA Checklist
-
-The QA agent validates these after implementation:
-
-- [ ] All acceptance criteria met
-- [ ] Manifest covers every directory under `upstream/nextui/src/`
-- [ ] Dispositions are consistent with audit matrix
-- [ ] Build system analysis covers makefiles and cross-compilation
-- [ ] Update mechanism analysis covers packaging, delivery, and apply
-- [ ] No files created outside specified paths
-- [ ] No modifications to NextUI source
-- [ ] Open questions are clearly flagged (not silently skipped)
-
-## Defects
-
-_(QA agent appends defects here after review.)_
-
 ## Notes
 
 - This sprint has no code deliverables and no automated tests. The "implementation" is structured analysis and documentation.
-- The coding agent should read source files systematically — don't try to understand every line of C, focus on structure, purpose, and interfaces.
+- Read source files systematically — don't try to understand every line of C, focus on structure, purpose, and interfaces.
 - The audit matrix provides high-level guidance but operates at the component level. This sprint's job is to go one level deeper — to individual directories and key files.
 - Device-dependent questions (e.g., "does this binary get stripped?", "what does this do at runtime?") should be flagged as open questions for later validation, not blocked on.
