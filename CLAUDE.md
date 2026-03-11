@@ -17,7 +17,7 @@ The canonical layout is defined in `docs/ideal_os_repo_structure_spec.md`. That 
 2. **No source code** in `upstream/`, `assets/`, or `release/`.
 3. **No generated files** in `src/` or `config/`.
 4. **No runtime data** scattered in docs — schemas go under `runtime/`.
-5. **Module-first placement** — if code belongs to launcher, session, library, emulation, system, updater, or common, place it in that `src/` module.
+5. **Module-first placement** — if code belongs to launcher, session, library, emulation, system, updater, tasks, sync, notifications, or common, place it in that `src/` module.
 
 ### Key Paths
 

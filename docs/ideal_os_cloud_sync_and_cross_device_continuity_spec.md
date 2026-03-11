@@ -177,6 +177,8 @@ Suggested path:
 runtime/sync/index.json
 ```
 
+**`artifact_id` convention:** `artifact_id` is composed as `game_id + ":" + artifact_type` (e.g., `snes:super_metroid:save`). The first two colon-delimited segments are the `game_id`; the last segment is the `artifact_type`. Game names must not contain colons.
+
 Example record:
 
 ```
@@ -297,7 +299,7 @@ Future versions may offer:
 
 Artifacts must include metadata fields:
 
-• artifact type • system • game ID • ROM fingerprint • timestamp • device ID • hash
+• artifact type • system • game ID (`system:game_name` format) • ROM fingerprint (sha256) • timestamp (updated_at) • device ID • sha256 checksum
 
 This allows accurate conflict resolution.
 

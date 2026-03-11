@@ -277,8 +277,7 @@ runtime/sessions/
 │   └── current-session.json
 ├── store/
 │   └── <session-id>/
-│       ├── metadata.json
-│       ├── state.sav
+│       ├── metadata.json            # session record (state_path references emulator save in-place)
 │       ├── state.preview.png        # optional future
 │       └── diagnostics.json         # optional future
 └── logs/

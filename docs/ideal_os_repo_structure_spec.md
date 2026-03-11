@@ -706,7 +706,10 @@ ideal-os/
 │   ├── session-manager/
 │   ├── library/
 │   ├── assets/
-│   └── updater/
+│   ├── updater/
+│   ├── task-scheduler/
+│   ├── cloud-sync/
+│   └── notifications/
 ├── scripts/
 │   ├── setup/
 │   ├── build/
