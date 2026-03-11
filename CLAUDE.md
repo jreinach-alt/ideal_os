@@ -54,6 +54,34 @@ Do not begin implementation without an approved sprint spec.
 
 Feedback loop: Spec → Implement → QA Validate → Fix Defects → QA Re-validate → Merge.
 
+### Branch and Worktree Convention
+
+**Branch naming:**
+
+| Purpose | Pattern | Example |
+|---------|---------|---------|
+| Sprint implementation | `sprint/<X.Y>` | `sprint/0.1` |
+| Defect fix during QA | `fix/sprint-<X.Y>-defect-<N>` | `fix/sprint-0.1-defect-1` |
+| Exploratory/throwaway | `scratch/<short-desc>` | `scratch/test-busybox-compat` |
+
+**Merge target:** Sprint branches merge into `main` (or the designated development branch) via the orchestrator. Coding agents never merge their own branches.
+
+**When to use worktrees:**
+
+Coding agents **must** use an isolated worktree when:
+- The sprint modifies files that other agents or the orchestrator may be reading concurrently.
+- Multiple sprints or defect fixes are in flight at the same time.
+
+Coding agents **may** work directly on the sprint branch (no worktree) when:
+- They are the only agent active on the repo.
+- The orchestrator explicitly instructs direct-branch work.
+
+**Worktree lifecycle:**
+1. Create: `git worktree add ../sprint-X.Y sprint/X.Y`
+2. Work and commit in the worktree.
+3. Push the sprint branch.
+4. The orchestrator merges and removes the worktree: `git worktree remove ../sprint-X.Y`
+
 ### What Requires User Approval
 
 - Sprint specs (before implementation begins)
@@ -62,6 +90,18 @@ Feedback loop: Spec → Implement → QA Validate → Fix Defects → QA Re-vali
 - Architectural decisions not covered by existing specs
 - Pushing to any branch other than the designated development branch
 
+### When Coding Agents Must Stop and Escalate
+
+Stop work and escalate to the orchestrator (or user) immediately when:
+
+1. **Spec ambiguity requiring an architectural decision.** If the spec can be read two ways and each leads to a different design, do not guess — escalate.
+2. **Missing file or dependency.** A file, library, or upstream component referenced by the spec does not exist in the repo and cannot be stubbed.
+3. **Out-of-table file creation.** Implementation would require creating or modifying files not listed in the sprint's "Files to Create or Modify" table.
+4. **Hardware-dependent test.** A required test cannot be written or executed without physical device access. Log it as a manual validation item and escalate.
+5. **Failing unrelated tests.** Pre-existing tests that were passing before the sprint now fail due to the changes. Do not suppress — escalate.
+
+When escalating, the agent must state: *what* it was doing, *which* criterion or file triggered the stop, and *what decision* it needs.
+
 ### What Agents May Do Autonomously
 
 - Implement code within an approved sprint spec
@@ -69,6 +109,40 @@ Feedback loop: Spec → Implement → QA Validate → Fix Defects → QA Re-vali
 - Fix defects found by QA within the sprint scope
 - Create commits on the development branch
 - Refactor within module boundaries if required by the sprint
+
+### Agent Handoff Artifacts
+
+When a coding agent finishes implementation (before QA begins), it must create a sprint summary:
+
+**File:** `docs/sprints/sprint-X.Y-summary.md`
+
+**Required sections:**
+
+```markdown
+# Sprint X.Y — Implementation Summary
+
+## Files Created
+| Path | Purpose |
+|------|---------|
+
+## Files Modified
+| Path | What Changed |
+|------|--------------|
+
+## Tests Written
+| Test | Location | What It Validates |
+|------|----------|-------------------|
+
+## Deviations from Spec
+| Deviation | Rationale |
+|-----------|-----------|
+(None if spec was followed exactly.)
+
+## Open Items
+- Anything the QA agent or orchestrator should be aware of
+```
+
+The QA agent reads this summary as its starting point. The orchestrator uses it to verify scope compliance before merge.
 
 ## Coding Standards
 
@@ -81,6 +155,28 @@ Feedback loop: Spec → Implement → QA Validate → Fix Defects → QA Re-vali
 - Prefer `printf` over `echo` for portability.
 - Error handling: check return codes, provide meaningful error messages to stderr.
 - Use `readonly` for constants.
+
+### BusyBox Ash Compatibility
+
+The TrimUI Brick runs BusyBox ash, not bash or full POSIX sh. Code that is technically POSIX-compliant may still fail on-device. Avoid these constructs:
+
+| Construct | Problem | Use Instead |
+|-----------|---------|-------------|
+| `local var=$(cmd)` | `local` masks `$?` — cannot check exit status | `local var; var=$(cmd)` |
+| `[[ ... ]]` | Not available in ash | `[ ... ]` with proper quoting |
+| `${var//pattern/replace}` | Parameter substitution not supported | `printf '%s' "$var" \| sed 's/pattern/replace/g'` |
+| `${var:offset:length}` | Substring extraction not supported | `printf '%s' "$var" \| cut -c offset-end` |
+| Arrays (`arr=(a b c)`) | No array support in ash | Use positional params or newline-delimited strings |
+| `echo -e` | Behavior varies; not portable | `printf 'text\n'` |
+| `read -r -a` | `-a` (array) not supported | `read -r` into single variable, parse with `cut`/`awk` |
+| `function name()` | `function` keyword not supported | `name() { ... }` |
+| `here-strings` (`<<<`) | Not supported | `printf '%s' "$var" \| cmd` |
+| Process substitution `<(cmd)` | Not supported | Use temp files or pipes |
+| `trap ... ERR` | `ERR` pseudo-signal not supported | Check return codes explicitly |
+| `set -o pipefail` | Not supported in ash | Check each pipeline stage or use temp files |
+| `mktemp --tmpdir` | BusyBox mktemp uses different flags | `mktemp /tmp/prefix.XXXXXX` |
+
+**Testing:** When feasible, validate shell scripts with `busybox ash -n script.sh` (syntax check) in addition to ShellCheck.
 
 ### JSON
 
@@ -149,13 +245,32 @@ Examples:
 - Session IDs: `<system>-<game-hash>-<timestamp>` (e.g., `snes-a13fd98c-20260310T211455Z`)
 - Atomic file writes: write to temp → fsync → rename into place.
 
-## Context Management
+## Session Startup Protocol
 
-When starting a new session or sprint, read these files for context:
+**Every agent must execute these steps at the start of every session.** This is not optional.
 
-1. This file (`CLAUDE.md`)
-2. `docs/roadmap.md` — Current phase and sprint status
-3. The active sprint spec in `docs/sprints/`
-4. Relevant subsystem specs in `docs/`
+### Step 1 — Read CLAUDE.md
 
-Do not re-read all 10 specification documents every session. Read only what is relevant to the current sprint.
+Read this file. You are doing this now. Confirms coding standards, escalation rules, and branch conventions are loaded.
+
+### Step 2 — Read the roadmap
+
+Read `docs/roadmap.md`. Identify the current phase and which sprint is active (look for `in-progress` or `approved` status).
+
+### Step 3 — Read the active sprint spec
+
+Read `docs/sprints/sprint-X.Y.md` for the sprint you are about to work on. Confirm it has an `Approved` date set. **Do not proceed if the spec is not approved.**
+
+### Step 4 — Read referenced subsystem specs (sprint-specific only)
+
+Read only the design documents listed in the sprint spec's "Reference Specs" section. Do not read all docs — read the sections cited by the sprint.
+
+### Step 5 — Read the sprint summary (if resuming)
+
+If a `docs/sprints/sprint-X.Y-summary.md` exists, read it to understand what was already implemented. This prevents duplicate work when resuming a session.
+
+### What NOT to read
+
+- Do not read all 10+ specification documents at session start.
+- Do not read specs for future phases or unrelated subsystems.
+- Do not read upstream notes unless the sprint explicitly requires it.

@@ -10,9 +10,22 @@ Copy this template to `docs/sprints/sprint-X.Y.md` when detailing a new sprint.
 
 Phase X — [Phase Name]
 
+## Approved
+
+<!-- The orchestrator or user sets this date when the spec is approved. -->
+<!-- Agents MUST NOT begin implementation until this field contains a date. -->
+**Not yet approved**
+
 ## Status
 
-`not-started` | `in-progress` | `qa-review` | `complete`
+`not-started` | `approved` | `in-progress` | `qa-review` | `complete`
+
+Status definitions:
+- `not-started` — Spec is being drafted or under review. No implementation allowed.
+- `approved` — Spec is locked and approved for implementation. Set the Approved date above.
+- `in-progress` — Coding agent is actively implementing.
+- `qa-review` — Implementation complete. QA agent is validating.
+- `complete` — All acceptance criteria met, QA passed, merged.
 
 ## Goal
 
@@ -83,6 +96,27 @@ The QA agent validates these after implementation:
 - [ ] No unrelated changes included
 - [ ] Commit messages follow format in CLAUDE.md
 - [ ] Code follows coding standards in CLAUDE.md
+
+## Defects
+
+QA agent appends defects here using this format. One section per defect.
+
+```markdown
+### Defect: [short title]
+
+- **Criterion violated:** AC [number]
+- **File:** `path/to/file`
+- **Observed:** What actually happened
+- **Expected:** What should have happened
+- **Repro:** Command or steps to reproduce
+- **Severity:** `blocking` | `major` | `minor`
+- **Status:** `open` | `fix-in-progress` | `verified`
+```
+
+Severity definitions:
+- `blocking` — Acceptance criterion cannot pass. Sprint cannot complete.
+- `major` — Functionality is wrong but a workaround exists. Must fix before merge.
+- `minor` — Cosmetic or non-functional issue. May defer with orchestrator approval.
 
 ## Notes
 
