@@ -1,0 +1,7 @@
+{"_schema_version":"1.0","timestamp":"2026-03-10T21:14:55Z","source":"session","event_type":"session_created","payload":{"session_id":"snes-a13fd98c-20260310T211455Z"}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T21:15:02Z","source":"session","event_type":"session_activated","payload":{"session_id":"snes-a13fd98c-20260310T211455Z"}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T21:30:00Z","source":"sync","event_type":"backup_completed","payload":{"game_id":"snes:super_metroid","artifact_count":2}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T21:45:10Z","source":"session","event_type":"session_suspended","payload":{"session_id":"snes-a13fd98c-20260310T211455Z","reason":"power_sleep"}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T22:00:00Z","source":"tasks","event_type":"task_completed","payload":{"task_id":"sync-001","task_type":"cloud_upload"}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T22:01:30Z","source":"sync","event_type":"sync_upload_failed","payload":{"game_id":"gba:metroid_fusion","error":"network_timeout"}}
+{"_schema_version":"1.0","timestamp":"2026-03-10T22:05:00Z","source":"notifications","event_type":"notification_displayed","payload":{"tier":1,"message":"Sync failed for Metroid Fusion"}}

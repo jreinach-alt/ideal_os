@@ -34,9 +34,11 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.2 — Shared Data Contracts (outline)
+### Sprint 0.2 — Shared Data Contracts
 
-**Scope (tentative):**
+**Status:** In Progress
+
+**Scope:**
 - Implement `src/common/game_identity.sh` — game_id format (`system:game_name`), system taxonomy, ROM path conventions
 - Implement `src/common/event_bus.sh` — file-based event log (append events to `runtime/events/`, consumers tail/poll)
 - Define event schema: `{"_schema_version": "1.0", "timestamp": "...", "source": "...", "event_type": "...", "payload": {...}}`
