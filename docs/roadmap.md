@@ -49,13 +49,14 @@ This prevents premature over-specification while keeping the overall trajectory 
 ### Sprint 0.3 — NextUI Hard Fork and Analysis (outline)
 
 **Scope (tentative):**
-- Bring NextUI source into `upstream/nextui/src/` as a hard fork baseline (not an upstream-tracking dependency)
-- Walk the full source tree and produce a file-level component map against the audit matrix (keep / strip-and-rebuild)
-- Identify the minimal bootable subset — what must stay for the OS to boot and launch an emulator
-- Produce `upstream/nextui/manifest.md` documenting every kept file and its role
-- Strip non-essential subsystems that Ideal OS will replace (launcher, updater, etc.), confirming boot still works conceptually
+- Bring NextUI source into `upstream/nextui/src/` as a hard fork baseline (not an upstream-tracking dependency) ✅
+- Walk the full source tree and produce a file-level component map
+- Disposition every component against the audit matrix (keep / eventually-replace) — but **remove nothing yet**
+- Document the build system: makefiles, toolchain, cross-compilation, artifact output
+- Document NextUI's existing update mechanism (critical path for Phase 2)
+- Produce `upstream/nextui/manifest.md` documenting every component and its disposition
 
-**Key principle:** Subtractive — start from a working NextUI, remove what Ideal OS rebuilds, keep a bootable core.
+**Key principle:** Analyze and map everything. Keep the system intact and bootable. Stripping happens incrementally as replacements are built.
 
 ---
 
@@ -89,38 +90,93 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-## Phase 1 — Session Manager
+## Phase 1 — Build Pipeline and First Boot
+
+**Goal:** Produce a flashable Ideal OS image from source and boot it on the TrimUI Brick. No functional changes from NextUI — just prove we own the build.
+
+### Sprint 1.1 — Cross-Compilation and Build System (outline)
+
+- Understand and document the NextUI build toolchain (ARM cross-compiler, makefile structure)
+- Reproduce the NextUI build from source in CI or local dev environment
+- Produce a flashable SD card image or update package
+
+### Sprint 1.2 — First Boot and Smoke Test (outline)
+
+- Flash the build to a TrimUI Brick
+- Verify boot, launcher display, and emulator launch all work
+- Document any delta from stock NextUI behavior
+- Establish the "known good baseline" — this is the starting point for all future changes
+
+### Sprint 1.3 — Ideal OS Branding Pass (outline)
+
+- Boot logo, launcher name, about screen
+- Minimal reskin to distinguish Ideal OS from stock NextUI
+- No functional changes — cosmetic only
+
+---
+
+## Phase 2 — OTA Updates
+
+**Goal:** In-place upgrades without SD card reflash. This is the critical dev iteration loop — the sooner OTA works, the faster everything else moves.
+
+**Reference spec:** `docs/architecture/ideal_os_ota_update_architecture_spec.md`
+
+### Sprint 2.1 — Existing Updater Analysis (outline)
+
+- Deep-dive into NextUI's current update mechanism
+- Determine what can be reused vs. what needs replacing
+- Define Ideal OS OTA architecture (may evolve the existing updater rather than replacing from scratch)
+
+### Sprint 2.2 — Manifest System and Version Comparison (outline)
+
+- Package manifests, version diffing, update eligibility checks
+
+### Sprint 2.3 — Package Download and Staging (outline)
+
+- Download update packages from a remote source, stage for apply
+
+### Sprint 2.4 — Apply and Migration (outline)
+
+- Apply staged updates, handle schema migrations, rollback on failure
+
+### Sprint 2.5 — Channel Workflow (stable/beta/dev) (outline)
+
+- Update channels for staged rollouts
+
+---
+
+## Phase 3 — Session Manager
 
 **Goal:** Build the core differentiating feature — resume-centric gameplay.
 
 **Reference spec:** `docs/architecture/ideal_os_session_manager_technical_architecture_spec.md`
 
-### Sprint 1.1 — Session Data Model and Persistence (outline)
+### Sprint 3.1 — Session Data Model and Persistence (outline)
 
 - Session record schema
 - Atomic write helper (`src/common/`)
 - Registry CRUD operations (`src/session/registry/`)
 - Unit tests for all persistence operations
 
-### Sprint 1.2 — Session API (outline)
+### Sprint 3.2 — Session API (outline)
 
 - `create_session`, `suspend_current_session`, `resume_session`
 - `get_active_session`, `list_sessions`, `discard_session`
 - API integration tests
 
-### Sprint 1.3 — Resume Stack (outline)
+### Sprint 3.3 — Resume Stack (outline)
 
 - Stack data structure and operations
 - Max session limit (8) and auto-prune
 - `restore_last_session` flow
 
-### Sprint 1.4 — Power Event Hooks (outline)
+### Sprint 3.4 — Power Event Hooks (outline)
 
 - Sleep/shutdown detection
 - Auto-suspend on power events
 - Boot resume flow (`last-session.json`)
 
-### Sprint 1.5 — Session Hardening (outline)
+### Sprint 3.5 — Session Hardening (outline)
 
 - Validation and recovery
 - Corrupt state handling
@@ -128,89 +184,76 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-## Phase 2 — Background Task Scheduler
+## Phase 4 — Background Task Scheduler
 
 **Goal:** Coordinate all background work so gameplay is never disrupted.
 
 **Reference spec:** `docs/architecture/ideal_os_background_services_and_task_scheduler_spec.md`
 
-### Sprint 2.1 — Core Scheduler (outline)
-### Sprint 2.2 — Policy Engine and Resource Budgets (outline)
-### Sprint 2.3 — Scheduler Integration Tests (outline)
+### Sprint 4.1 — Core Scheduler (outline)
+### Sprint 4.2 — Policy Engine and Resource Budgets (outline)
+### Sprint 4.3 — Scheduler Integration Tests (outline)
 
 ---
 
-## Phase 3 — Cloud Sync
+## Phase 5 — Cloud Sync
 
 **Goal:** Automatic save backup and cross-device continuity.
 
 **Reference spec:** `docs/architecture/ideal_os_cloud_sync_and_cross_device_continuity_spec.md`
 
-### Sprint 3.1 — Local Sync Engine (outline)
-### Sprint 3.2 — Cloud Upload (OneDrive/Google Drive) (outline)
-### Sprint 3.3 — Conflict Resolution (outline)
-### Sprint 3.4 — Cross-Device Pull (outline)
+### Sprint 5.1 — Local Sync Engine (outline)
+### Sprint 5.2 — Cloud Upload (OneDrive/Google Drive) (outline)
+### Sprint 5.3 — Conflict Resolution (outline)
+### Sprint 5.4 — Cross-Device Pull (outline)
 
 ---
 
-## Phase 4 — Notifications and Guardian Alerts
+## Phase 6 — Notifications and Guardian Alerts
 
 **Goal:** System health communication and family-safe reliability.
 
 **Reference spec:** `docs/architecture/ideal_os_notifications_and_guardian_alerts_spec.md`
 
-### Sprint 4.1 — Local Notification Engine (outline)
-### Sprint 4.2 — Guardian Alerts (outline)
+### Sprint 6.1 — Local Notification Engine (outline)
+### Sprint 6.2 — Guardian Alerts (outline)
 
 ---
 
-## Phase 5 — OTA Updates
-
-**Goal:** In-place upgrades without SD card reflash.
-
-**Reference spec:** `docs/architecture/ideal_os_ota_update_architecture_spec.md`
-
-### Sprint 5.1 — Manifest System and Version Comparison (outline)
-### Sprint 5.2 — Package Download and Staging (outline)
-### Sprint 5.3 — Apply and Migration (outline)
-### Sprint 5.4 — Channel Workflow (stable/beta/dev) (outline)
-
----
-
-## Phase 6 — Library Manager
+## Phase 7 — Library Manager
 
 **Goal:** ROM discovery, game identity management, favorites, collections.
 
-### Sprint 6.1 — ROM Scanner and Game Database (outline)
-### Sprint 6.2 — Favorites, Recents, and Collections (outline)
-### Sprint 6.3 — Search Index (outline)
+### Sprint 7.1 — ROM Scanner and Game Database (outline)
+### Sprint 7.2 — Favorites, Recents, and Collections (outline)
+### Sprint 7.3 — Search Index (outline)
 
 ---
 
-## Phase 7 — Emulation Layer
+## Phase 8 — Emulation Layer
 
 **Goal:** Wrap NextUI emulator launch path with session and scheduler integration.
 
-### Sprint 7.1 — Launch Orchestration and Core Selection (outline)
-### Sprint 7.2 — Save State and Suspend/Resume Wrappers (outline)
+### Sprint 8.1 — Launch Orchestration and Core Selection (outline)
+### Sprint 8.2 — Save State and Suspend/Resume Wrappers (outline)
 
 ---
 
-## Phase 8 — Launcher Integration
+## Phase 9 — Launcher Integration
 
 **Goal:** Tie all subsystems together in the user-facing launcher.
 
-### Sprint 8.1 — Session Manager and Library Integration (outline)
-### Sprint 8.2 — Sync Status and Notifications (outline)
-### Sprint 8.3 — OTA Update UI (outline)
+### Sprint 9.1 — Session Manager and Library Integration (outline)
+### Sprint 9.2 — Sync Status and Notifications (outline)
+### Sprint 9.3 — OTA Update UI (outline)
 
 ---
 
-## Phase 9 — Polish and Public Release
+## Phase 10 — Polish and Public Release
 
-### Sprint 9.1 — Performance Optimization (outline)
-### Sprint 9.2 — Documentation and Release Notes (outline)
-### Sprint 9.3 — Release Candidate Testing (outline)
+### Sprint 10.1 — Performance Optimization (outline)
+### Sprint 10.2 — Documentation and Release Notes (outline)
+### Sprint 10.3 — Release Candidate Testing (outline)
 
 ---
 
@@ -220,9 +263,10 @@ Each completed phase that produces a shippable increment gets a Stardate version
 
 | Milestone | Target Stardate |
 |-----------|----------------|
-| First flashable build (Session Manager working) | TBD |
+| First bootable build (unmodified NextUI from our build pipeline) | TBD |
+| OTA update working (dev iteration loop closed) | TBD |
+| Session Manager functional | TBD |
 | Cloud Sync functional | TBD |
-| OTA working | TBD |
 | Public release | TBD |
 
 Dates are intentionally omitted — we ship when it's ready, not when a calendar says so.
