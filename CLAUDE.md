@@ -275,19 +275,30 @@ These are built in Phase 0 (Sprint 0.2) before any subsystem:
 
 Read this file. You are doing this now. Confirms coding standards, escalation rules, and branch conventions are loaded.
 
-### Step 2 — Read the roadmap
+### Step 2 — Verify environment
+
+Ensure required tools are available. Install if missing:
+
+```sh
+# BusyBox ash — required for on-target shell compatibility testing
+busybox ash -c 'echo ok' 2>/dev/null || apt-get install -y busybox-static
+```
+
+All shell scripts target BusyBox ash. Tests must pass under `busybox ash`, not just bash or dash.
+
+### Step 3 — Read the roadmap
 
 Read `docs/roadmap.md`. Identify the current phase and which sprint is active (look for `in-progress` or `approved` status).
 
-### Step 3 — Read the active sprint spec
+### Step 4 — Read the active sprint spec
 
 Read `docs/sprints/sprint-X.Y.md` for the sprint you are about to work on. Confirm it has an `Approved` date set. **Do not proceed if the spec is not approved.**
 
-### Step 4 — Read referenced subsystem specs (sprint-specific only)
+### Step 5 — Read referenced subsystem specs (sprint-specific only)
 
 Read only the design documents listed in the sprint spec's "Reference Specs" section. Do not read all docs — read the sections cited by the sprint.
 
-### Step 5 — Read the sprint summary (if resuming)
+### Step 6 — Read the sprint summary (if resuming)
 
 If a `docs/sprints/sprint-X.Y-summary.md` exists, read it to understand what was already implemented. This prevents duplicate work when resuming a session.
 
@@ -296,3 +307,29 @@ If a `docs/sprints/sprint-X.Y-summary.md` exists, read it to understand what was
 - Do not read all 10+ specification documents at session start.
 - Do not read specs for future phases or unrelated subsystems.
 - Do not read upstream notes unless the sprint explicitly requires it.
+
+## Pre-Flight Check Protocol
+
+**Every sprint must have a pre-flight check before implementation begins.** The agent performs this after reading the sprint spec and before writing any code.
+
+### Purpose
+
+Identify ambiguities, missing dependencies, and environmental issues early — before they become mid-sprint escalations.
+
+### Pre-flight steps
+
+1. **Inventory existing state.** List all files and directories in the repo. Identify what already exists vs what the sprint will create or modify.
+2. **Verify the sprint's file table.** For every file in the "Files to Create or Modify" table, confirm the parent directory exists (or is being created in-sprint) and that no naming conflicts exist.
+3. **Check for spec ambiguities.** Read the sprint scope and acceptance criteria. Flag any item that can be interpreted two ways, references an undefined term, or depends on a decision not yet made.
+4. **Validate tool and dependency availability.** Confirm that required tools (`busybox ash`, `shellcheck`, etc.) are installed. If a sprint depends on outputs from a prior sprint, verify those outputs exist.
+5. **Report findings.** Present a summary to the orchestrator (or user) with:
+   - Confirmed ready items
+   - Ambiguities requiring a decision
+   - Missing dependencies or prerequisites
+   - Recommended resolutions for each issue
+
+### Gate
+
+The agent **must not begin implementation** until all ambiguities are resolved — either by the agent's own recommendation being accepted or by explicit orchestrator/user decision.
+
+If no ambiguities are found, the agent states "Pre-flight complete, no blockers" and proceeds.
