@@ -62,27 +62,21 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.4 — Boot Flow Analysis (outline)
+### Sprint 0.4 — Boot Flow Analysis and Integration Boundaries (outline)
 
 **Scope (tentative):**
 - Trace the NextUI boot sequence from power-on through launcher display
 - Document every script, binary, and config file involved in the boot chain
 - Identify Ideal OS hook points (boot animation, session resume, launcher handoff)
-- Produce `upstream/nextui/notes/boot-flow-analysis.md`
-
----
-
-### Sprint 0.5 — Conflict Analysis and Integration Boundaries (outline)
-
-**Scope (tentative):**
 - Deep analysis of NextUI subsystems that overlap with Ideal OS goals (launcher, updater, `.system/` folder, PAK store)
 - Document specific wrap vs. replace strategies with file-level detail
 - Define the integration boundary: where NextUI platform layer ends and Ideal OS core services begin
+- Produce `upstream/nextui/notes/boot-flow-analysis.md`
 - Produce `upstream/nextui/notes/conflict-analysis.md`
 
 ---
 
-### Sprint 0.6 — CI and Code Quality Baseline (outline)
+### Sprint 0.5 — CI and Code Quality Baseline (outline)
 
 **Scope (tentative):**
 - ShellCheck integration for all `.sh` files

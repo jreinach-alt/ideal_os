@@ -47,9 +47,9 @@ Produce a complete, file-level analysis of the NextUI source tree — documentin
 
 - Removing, stripping, or modifying any NextUI source files
 - Boot flow tracing (Sprint 0.4)
-- Conflict analysis and integration boundary definitions (Sprint 0.5)
+- Conflict analysis and integration boundary definitions (consolidated into Sprint 0.4)
 - Writing any Ideal OS code or scripts
-- Setting up CI/CD (Sprint 0.6)
+- Setting up CI/CD (Sprint 0.5)
 - Cross-compiling or building NextUI (Phase 1)
 - Answering every open question from the audit matrix — flag unknowns, don't guess
 
