@@ -46,17 +46,40 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.3 — NextUI Fork Integration (outline)
+### Sprint 0.3 — NextUI Hard Fork and Analysis (outline)
 
 **Scope (tentative):**
-- Clone/integrate NextUI into `upstream/nextui/`
-- Document inherited components and their locations
-- Disable conflicting NextUI subsystems per fork-and-harvest plan
-- Validate minimal boot flow documentation
+- Bring NextUI source into `upstream/nextui/src/` as a hard fork baseline (not an upstream-tracking dependency)
+- Walk the full source tree and produce a file-level component map against the audit matrix (keep / strip-and-rebuild)
+- Identify the minimal bootable subset — what must stay for the OS to boot and launch an emulator
+- Produce `upstream/nextui/manifest.md` documenting every kept file and its role
+- Strip non-essential subsystems that Ideal OS will replace (launcher, updater, etc.), confirming boot still works conceptually
+
+**Key principle:** Subtractive — start from a working NextUI, remove what Ideal OS rebuilds, keep a bootable core.
 
 ---
 
-### Sprint 0.4 — CI and Code Quality Baseline (outline)
+### Sprint 0.4 — Boot Flow Analysis (outline)
+
+**Scope (tentative):**
+- Trace the NextUI boot sequence from power-on through launcher display
+- Document every script, binary, and config file involved in the boot chain
+- Identify Ideal OS hook points (boot animation, session resume, launcher handoff)
+- Produce `upstream/nextui/notes/boot-flow-analysis.md`
+
+---
+
+### Sprint 0.5 — Conflict Analysis and Integration Boundaries (outline)
+
+**Scope (tentative):**
+- Deep analysis of NextUI subsystems that overlap with Ideal OS goals (launcher, updater, `.system/` folder, PAK store)
+- Document specific wrap vs. replace strategies with file-level detail
+- Define the integration boundary: where NextUI platform layer ends and Ideal OS core services begin
+- Produce `upstream/nextui/notes/conflict-analysis.md`
+
+---
+
+### Sprint 0.6 — CI and Code Quality Baseline (outline)
 
 **Scope (tentative):**
 - ShellCheck integration for all `.sh` files
