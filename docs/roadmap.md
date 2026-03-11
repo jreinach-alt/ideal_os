@@ -36,7 +36,7 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ### Sprint 0.2 — Shared Data Contracts
 
-**Status:** In Progress
+**Status:** Complete
 
 **Scope:**
 - Implement `src/common/game_identity.sh` — game_id format (`system:game_name`), system taxonomy, ROM path conventions
