@@ -40,5 +40,6 @@
 
 ## Open Items
 
-- 10 open questions flagged in the manifest (see Open Questions Summary table) — these require device-level validation or deeper analysis in future sprints (0.4, 0.5, 1.1, 1.2)
-- Sprint spec status should be updated to `complete` by the orchestrator after QA validation
+- 7 of 10 open questions resolved through deep source analysis (Q1-Q5, Q8-Q9) — see Resolved Questions section in manifest
+- 3 remaining open questions (Q6, Q7, Q10) require device-level validation in future sprints (0.4, 1.2)
+- Sprint status updated to `complete`

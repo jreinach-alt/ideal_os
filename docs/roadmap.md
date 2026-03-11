@@ -46,9 +46,11 @@ This prevents premature over-specification while keeping the overall trajectory 
 
 ---
 
-### Sprint 0.3 — NextUI Hard Fork and Analysis (outline)
+### Sprint 0.3 — NextUI Hard Fork and Analysis
 
-**Scope (tentative):**
+**Status:** Complete
+
+**Scope:**
 - Bring NextUI source into `upstream/nextui/src/` as a hard fork baseline (not an upstream-tracking dependency) ✅
 - Walk the full source tree and produce a file-level component map
 - Disposition every component against the audit matrix (keep / eventually-replace) — but **remove nothing yet**
