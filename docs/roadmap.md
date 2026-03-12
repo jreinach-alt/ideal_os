@@ -1,268 +1,226 @@
-# Ideal OS – Development Roadmap
+# Continuity — Development Roadmap
 
 ## Roadmap Philosophy
 
-This roadmap is **skeletal by design**. Only the current and next sprint are fully detailed. Future sprints have a scope outline but no acceptance criteria — those are filled in iteratively as we approach them.
-
-This prevents premature over-specification while keeping the overall trajectory visible.
+Small, modular sprints. Each sprint produces a testable, working increment. Platform clients are developed independently — they share core logic but have separate sprint tracks.
 
 ---
 
 ## Phase 0 — Foundation
 
-**Goal:** Establish the repo, tooling, and development workflow so all future sprints have a stable base to build on.
+**Goal:** Repo structure, shared core logic, test harness. Everything the platform clients build on.
 
-### Sprint 0.1 — Repo Scaffolding and Test Harness
+### Sprint 0.1 — Repo Scaffolding and System Taxonomy
 
-**Status:** Complete
+**Status:** In Progress
 
 **Scope:**
-- Create the canonical directory tree per `ideal_os_repo_structure_spec.md`
-- Implement a POSIX sh test runner (`scripts/test.sh`)
-- Add initial test fixtures and a sample test to validate the harness
-- Create `docs/agent-workflow.md` (orchestrator/coder/QA protocol)
-- Create `docs/testing.md` (how to write and run tests)
-- Add `.gitkeep` files to preserve empty directory structure
+- Pivot repo from Ideal OS to Continuity
+- Establish directory structure per CLAUDE.md
+- Define canonical system taxonomy (`config/system_taxonomy.json`)
+- Define platform path mappings (`config/platform_maps/*.json`)
+- Write foundational design specs (architecture, security, roadmap)
+- Set up test harness (`scripts/test.sh`)
 
 **Acceptance Criteria:**
-- All directories from the repo structure spec exist
-- `scripts/test.sh` runs and reports pass/fail
-- At least one sample test passes
-- Agent workflow and testing docs are complete
-
-**Sprint Spec:** `docs/sprints/sprint-0.1.md`
+- Directory structure matches CLAUDE.md spec
+- System taxonomy JSON is valid, covers all target systems
+- Platform maps exist for NextUI, Onion OS, RetroDeck, Android
+- Design docs cover architecture, security model, enrollment flow
+- Test harness runs and reports pass/fail
 
 ---
 
-### Sprint 0.2 — Shared Data Contracts
+### Sprint 0.2 — Core Sync Engine (Shell)
 
-**Status:** Complete
+**Status:** Planned
 
 **Scope:**
-- Implement `src/common/game_identity.sh` — game_id format (`system:game_name`), system taxonomy, ROM path conventions
-- Implement `src/common/event_bus.sh` — file-based event log (append events to `runtime/events/`, consumers tail/poll)
-- Define event schema: `{"_schema_version": "1.0", "timestamp": "...", "source": "...", "event_type": "...", "payload": {...}}`
-- Unit tests for game identity parsing and event log read/write
+- Implement `src/core/path_mapper.sh` — translates platform save paths ↔ repo paths
+- Implement `src/core/change_detector.sh` — `find -newer` polling for modified `.srm` files
+- Implement `src/core/sync_engine.sh` — git add, commit, push, pull operations
+- Implement `src/core/wifi_monitor.sh` — connectivity check before network operations
+- Unit tests for all core functions
+- Integration test: detect change → stage → commit cycle (local only, no push)
+
+**Acceptance Criteria:**
+- Path mapper correctly translates all systems for all platforms
+- Change detector finds modified `.srm` files after marker timestamp
+- Sync engine stages, commits, and pushes changed files
+- WiFi monitor correctly reports online/offline
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.1 (taxonomy and platform maps)
 
 ---
 
-### Sprint 0.3 — NextUI Hard Fork and Analysis
+### Sprint 0.3 — Conflict Handler
 
-**Status:** Complete
+**Status:** Planned
 
 **Scope:**
-- Bring NextUI source into `upstream/nextui/src/` as a hard fork baseline (not an upstream-tracking dependency) ✅
-- Walk the full source tree and produce a file-level component map
-- Disposition every component against the audit matrix (keep / eventually-replace) — but **remove nothing yet**
-- Document the build system: makefiles, toolchain, cross-compilation, artifact output
-- Document NextUI's existing update mechanism (critical path for Phase 2)
-- Produce `upstream/nextui/manifest.md` documenting every component and its disposition
+- Implement `src/core/conflict_handler.sh` — detect merge conflicts, preserve both versions
+- Conflict metadata format (`.conflict` JSON files)
+- Resolution logic: `prompt`, `keep_newest`, `keep_device`
+- Unit tests for conflict scenarios
+- Integration test: simulate two-device conflict, verify both saves preserved
 
-**Key principle:** Analyze and map everything. Keep the system intact and bootable. Stripping happens incrementally as replacements are built.
+**Acceptance Criteria:**
+- Merge conflict on `.srm` file preserves both versions (`.local` + canonical)
+- Conflict metadata JSON written with device names and timestamps
+- Resolution removes conflict artifacts and commits result
+- No save data is ever silently overwritten
+- All tests pass under `busybox ash`
 
----
-
-### Sprint 0.4 — Boot Flow Analysis and Integration Boundaries (outline)
-
-**Scope (tentative):**
-- Trace the NextUI boot sequence from power-on through launcher display
-- Document every script, binary, and config file involved in the boot chain
-- Identify Ideal OS hook points (boot animation, session resume, launcher handoff)
-- Deep analysis of NextUI subsystems that overlap with Ideal OS goals (launcher, updater, `.system/` folder, PAK store)
-- Document specific wrap vs. replace strategies with file-level detail
-- Define the integration boundary: where NextUI platform layer ends and Ideal OS core services begin
-- Produce `upstream/nextui/notes/boot-flow-analysis.md`
-- Produce `upstream/nextui/notes/conflict-analysis.md`
+**Dependencies:** Sprint 0.2 (sync engine)
 
 ---
 
-### Sprint 0.5 — CI and Code Quality Baseline (outline)
+## Phase 1 — First Platform Client (NextUI / TrimUI Brick)
 
-**Scope (tentative):**
-- ShellCheck integration for all `.sh` files
-- JSON validation for all `.json` files
-- GitHub Actions workflow for test + lint on push
-- Pre-commit hooks (optional)
+**Goal:** Working save sync on a TrimUI Brick. This is the proof of concept.
 
----
+### Sprint 1.1 — Enrollment (SD Card Import)
 
-## Phase 1 — Build Pipeline and First Boot
+**Status:** Planned
 
-**Goal:** Produce a flashable Ideal OS image from source and boot it on the TrimUI Brick. No functional changes from NextUI — just prove we own the build.
+**Scope:**
+- Implement `src/enrollment/sd_card_import.sh` — detect and import `.continuity/setup.json` from SD card
+- Credential storage layout on device
+- Initial `git clone` of user's repo
+- Device registration in `.continuity/devices/`
+- Unit tests for import parsing, credential storage
 
-### Sprint 1.1 — Cross-Compilation and Build System (outline)
+**Acceptance Criteria:**
+- Setup JSON detected on boot, credentials imported, setup file deleted
+- Repo cloned to device
+- Device JSON written to `.continuity/devices/`
+- All tests pass under `busybox ash`
 
-- Understand and document the NextUI build toolchain (ARM cross-compiler, makefile structure)
-- Reproduce the NextUI build from source in CI or local dev environment
-- Produce a flashable SD card image or update package
-
-### Sprint 1.2 — First Boot and Smoke Test (outline)
-
-- Flash the build to a TrimUI Brick
-- Verify boot, launcher display, and emulator launch all work
-- Document any delta from stock NextUI behavior
-- Establish the "known good baseline" — this is the starting point for all future changes
-
-### Sprint 1.3 — Ideal OS Branding Pass (outline)
-
-- Boot logo, launcher name, about screen
-- Minimal reskin to distinguish Ideal OS from stock NextUI
-- No functional changes — cosmetic only
+**Dependencies:** Sprint 0.2 (sync engine for git clone)
 
 ---
 
-## Phase 2 — OTA Updates
+### Sprint 1.2 — NextUI Daemon
 
-**Goal:** In-place upgrades without SD card reflash. This is the critical dev iteration loop — the sooner OTA works, the faster everything else moves.
+**Status:** Planned
 
-**Reference spec:** `docs/architecture/ideal_os_ota_update_architecture_spec.md`
+**Scope:**
+- Implement `src/platforms/nextui/continuity_daemon.sh` — main daemon loop
+- `auto.sh` hook integration for boot-time launch
+- PID file management (prevent duplicate instances)
+- Pull on boot, poll loop, push on change
+- Graceful shutdown on SIGTERM
+- Manual test checklist for on-device validation
 
-### Sprint 2.1 — Existing Updater Analysis (outline)
+**Acceptance Criteria:**
+- Daemon starts on boot via auto.sh
+- Pulls latest saves on startup
+- Detects `.srm` changes within 30 seconds
+- Commits and pushes when WiFi is available
+- Queues commits locally when offline, pushes when connectivity returns
+- Clean shutdown on SIGTERM
+- Core tests pass under `busybox ash`
 
-- Deep-dive into NextUI's current update mechanism
-- Determine what can be reused vs. what needs replacing
-- Define Ideal OS OTA architecture (may evolve the existing updater rather than replacing from scratch)
-
-### Sprint 2.2 — Manifest System and Version Comparison (outline)
-
-- Package manifests, version diffing, update eligibility checks
-
-### Sprint 2.3 — Package Download and Staging (outline)
-
-- Download update packages from a remote source, stage for apply
-
-### Sprint 2.4 — Apply and Migration (outline)
-
-- Apply staged updates, handle schema migrations, rollback on failure
-
-### Sprint 2.5 — Channel Workflow (stable/beta/dev) (outline)
-
-- Update channels for staged rollouts
+**Dependencies:** Sprint 1.1 (enrollment), Sprint 0.3 (conflict handler)
 
 ---
 
-## Phase 3 — Session Manager
+### Sprint 1.3 — NextUI Tool PAK
 
-**Goal:** Build the core differentiating feature — resume-centric gameplay.
+**Status:** Planned
 
-**Reference spec:** `docs/architecture/ideal_os_session_manager_technical_architecture_spec.md`
+**Scope:**
+- Implement `src/platforms/nextui/Continuity.pak/launch.sh` — Tool PAK for sync UI
+- Status display: last sync time, pending changes, linked devices
+- Manual sync trigger
+- Conflict resolution UI (show conflicted saves, let user pick)
+- Enrollment via local web setup (alternative to SD card)
+- Unlink device option
 
-### Sprint 3.1 — Session Data Model and Persistence (outline)
+**Acceptance Criteria:**
+- PAK appears in Tools menu on device
+- Shows sync status, last sync time
+- Manual sync pushes/pulls immediately
+- Conflict resolution presents both saves with device attribution
+- Web setup flow works from phone browser
 
-- Session record schema
-- Atomic write helper (`src/common/`)
-- Registry CRUD operations (`src/session/registry/`)
-- Unit tests for all persistence operations
-
-### Sprint 3.2 — Session API (outline)
-
-- `create_session`, `suspend_current_session`, `resume_session`
-- `get_active_session`, `list_sessions`, `discard_session`
-- API integration tests
-
-### Sprint 3.3 — Resume Stack (outline)
-
-- Stack data structure and operations
-- Max session limit (8) and auto-prune
-- `restore_last_session` flow
-
-### Sprint 3.4 — Power Event Hooks (outline)
-
-- Sleep/shutdown detection
-- Auto-suspend on power events
-- Boot resume flow (`last-session.json`)
-
-### Sprint 3.5 — Session Hardening (outline)
-
-- Validation and recovery
-- Corrupt state handling
-- Edge case tests
+**Dependencies:** Sprint 1.2 (daemon running)
 
 ---
 
-## Phase 4 — Background Task Scheduler
+## Phase 2 — Second Platform (RetroDeck / Steam Deck)
 
-**Goal:** Coordinate all background work so gameplay is never disrupted.
+**Goal:** Cross-device sync works between TrimUI Brick and Steam Deck.
 
-**Reference spec:** `docs/architecture/ideal_os_background_services_and_task_scheduler_spec.md`
+### Sprint 2.1 — RetroDeck Setup Script
 
-### Sprint 4.1 — Core Scheduler (outline)
-### Sprint 4.2 — Policy Engine and Resource Budgets (outline)
-### Sprint 4.3 — Scheduler Integration Tests (outline)
-
----
-
-## Phase 5 — Cloud Sync
-
-**Goal:** Automatic save backup and cross-device continuity.
-
-**Reference spec:** `docs/architecture/ideal_os_cloud_sync_and_cross_device_continuity_spec.md`
-
-### Sprint 5.1 — Local Sync Engine (outline)
-### Sprint 5.2 — Cloud Upload (OneDrive/Google Drive) (outline)
-### Sprint 5.3 — Conflict Resolution (outline)
-### Sprint 5.4 — Cross-Device Pull (outline)
+**Scope:**
+- CLI setup script for RetroDeck (detect save paths, clone repo, install systemd service)
+- Path mapping validation for RetroDeck directory structure
+- systemd user service for daemon
 
 ---
 
-## Phase 6 — Notifications and Guardian Alerts
+### Sprint 2.2 — RetroDeck Daemon (inotify-based)
 
-**Goal:** System health communication and family-safe reliability.
-
-**Reference spec:** `docs/architecture/ideal_os_notifications_and_guardian_alerts_spec.md`
-
-### Sprint 6.1 — Local Notification Engine (outline)
-### Sprint 6.2 — Guardian Alerts (outline)
+**Scope:**
+- Daemon using `inotifywait` for event-driven change detection
+- Same core sync engine, different change detector
+- Conflict resolution via desktop notification
 
 ---
 
-## Phase 7 — Library Manager
+### Sprint 2.3 — Cross-Device Integration Test
 
-**Goal:** ROM discovery, game identity management, favorites, collections.
-
-### Sprint 7.1 — ROM Scanner and Game Database (outline)
-### Sprint 7.2 — Favorites, Recents, and Collections (outline)
-### Sprint 7.3 — Search Index (outline)
-
----
-
-## Phase 8 — Emulation Layer
-
-**Goal:** Wrap NextUI emulator launch path with session and scheduler integration.
-
-### Sprint 8.1 — Launch Orchestration and Core Selection (outline)
-### Sprint 8.2 — Save State and Suspend/Resume Wrappers (outline)
+**Scope:**
+- End-to-end test: save on Brick → sync → verify on RetroDeck (and reverse)
+- Conflict scenario: save on both devices → verify both preserved
+- This sprint validates the entire architecture across two real platforms
 
 ---
 
-## Phase 9 — Launcher Integration
+## Phase 3 — Additional Platforms
 
-**Goal:** Tie all subsystems together in the user-facing launcher.
+### Sprint 3.1 — Onion OS Client (outline)
 
-### Sprint 9.1 — Session Manager and Library Integration (outline)
-### Sprint 9.2 — Sync Status and Notifications (outline)
-### Sprint 9.3 — OTA Update UI (outline)
+Similar to NextUI. Different save paths, different boot hook mechanism. Same core engine.
+
+### Sprint 3.2 — Android Client (outline)
+
+Java/Kotlin app wrapping the core sync logic. Native `FileObserver`, Material UI for status and conflicts.
 
 ---
 
-## Phase 10 — Polish and Public Release
+## Phase 4 — Polish and Community
 
-### Sprint 10.1 — Performance Optimization (outline)
-### Sprint 10.2 — Documentation and Release Notes (outline)
-### Sprint 10.3 — Release Candidate Testing (outline)
+### Sprint 4.1 — Enrollment Web Experience (outline)
+
+- `idealos.dev/setup` — guided repo creation and App installation
+- QR code for device setup URL
+
+### Sprint 4.2 — Token Expiry and Rotation (outline)
+
+- Warn when PAT approaching expiry
+- Guide user through rotation without losing sync
+
+### Sprint 4.3 — Documentation and Release (outline)
+
+- User-facing setup guides per platform
+- Core selection compatibility guide ("which cores produce compatible SRAM across devices")
+- First public release
 
 ---
 
 ## Versioning
 
-Each completed phase that produces a shippable increment gets a Stardate version:
+SemVer: `MAJOR.MINOR.PATCH`
 
-| Milestone | Target Stardate |
-|-----------|----------------|
-| First bootable build (unmodified NextUI from our build pipeline) | TBD |
-| OTA update working (dev iteration loop closed) | TBD |
-| Session Manager functional | TBD |
-| Cloud Sync functional | TBD |
-| Public release | TBD |
+| Milestone | Version |
+|-----------|---------|
+| Core sync engine + NextUI client working | 0.1.0 |
+| RetroDeck client + cross-device validated | 0.2.0 |
+| Onion OS + Android clients | 0.3.0 |
+| Public release | 1.0.0 |
 
-Dates are intentionally omitted — we ship when it's ready, not when a calendar says so.
+Dates intentionally omitted — ship when ready.
