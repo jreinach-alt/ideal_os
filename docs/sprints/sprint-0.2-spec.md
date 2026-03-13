@@ -74,13 +74,16 @@ Git compares file content by SHA hash — identical files produce no diff, no st
 |----------|-----------|-------------|
 | `cd_sync_saves_to_repo` | `(repo_dir)` | Copy all `.srm` files from device save dirs into the repo working tree at their mapped paths. Requires path mapper to be loaded. |
 | `cd_detect_changes` | `(repo_dir)` | Run `git status --porcelain` in the repo, return list of changed/new `.srm` files (repo-relative paths), one per line. Returns empty if nothing changed. |
+| `cd_sync_repo_to_saves` | `(repo_dir)` | Copy all `.srm` files from the repo working tree back out to device save dirs at their mapped paths. Used after `se_pull` to land incoming saves where the emulator expects them. |
 
 **Implementation notes:**
 - `cd_sync_saves_to_repo` creates parent directories in the repo as needed (`mkdir -p`).
-- Only `.srm` files are copied — other files in save directories are ignored.
+- `cd_sync_repo_to_saves` creates parent directories on the device as needed (`mkdir -p`).
+- Only `.srm` files are copied in both directions — other files are ignored.
 - Directories that don't exist on the device are silently skipped (a system with no saves yet).
 - The copy is cheap: `.srm` files are 8–128 KB each, and typical game libraries have dozens, not thousands.
 - `cd_detect_changes` filters `git status` output to only `.srm` files (ignoring `.conflict`, `.local`, or other metadata that may exist in the repo).
+- `cd_sync_repo_to_saves` does a simple overwrite for now. Sprint 0.3 will add conflict guards (e.g. skip copy if local file was also modified since last sync).
 
 ---
 
@@ -147,11 +150,11 @@ These are explicitly **not** part of Sprint 0.2:
 | Shipping a static git binary for constrained devices | 1.2 (NextUI PAK) |
 | inotify-based change detection (RetroDeck) | 2.2 |
 | Android FileObserver | 3.2 |
-| Reverse sync (repo → device save dirs after pull) | 0.3 or 1.2 |
+| Conflict-aware reverse sync (skip if local also modified) | 0.3 |
 
 `se_pull` returns a distinct code on divergence but does not resolve it — Sprint 0.3's conflict handler will consume that signal.
 
-**Note on reverse sync:** After `se_pull` brings new saves into the repo, they need to be copied back out to device save directories. This is the inverse of `cd_sync_saves_to_repo`. It's listed as out of scope because it requires conflict-awareness (what if the device file is also newer?), but we flag it here so Sprint 0.3 or 1.2 picks it up.
+`cd_sync_repo_to_saves` performs a simple overwrite copy-back after pull. Sprint 0.3 will wrap this with conflict detection (what if the device file was also modified since last sync?).
 
 ---
 
@@ -194,23 +197,27 @@ These are explicitly **not** part of Sprint 0.2:
 8. `cd_detect_changes` returns changed paths when saves differ from repo HEAD.
 9. `cd_detect_changes` returns empty when saves are identical to repo HEAD.
 10. Newly added `.srm` files (no prior repo version) are detected as changes.
+11. `cd_sync_repo_to_saves` copies `.srm` files from repo to correct device save paths.
+12. `cd_sync_repo_to_saves` creates device directories as needed.
+13. `cd_sync_repo_to_saves` ignores non-`.srm` files in repo.
 
 ### Sync Engine
-11. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
-12. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
-13. `se_commit` with multiple files uses `N saves updated` as subject.
-14. `se_push` retries on network error with exponential backoff (verify via mock/log).
-15. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
-16. `se_has_unpushed_commits` correctly reports when local is ahead.
+14. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
+15. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
+16. `se_commit` with multiple files uses `N saves updated` as subject.
+17. `se_push` retries on network error with exponential backoff (verify via mock/log).
+18. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
+19. `se_has_unpushed_commits` correctly reports when local is ahead.
 
 ### WiFi Monitor
-17. `wm_is_online` returns 0 when network is reachable.
-18. `wm_is_online` returns 1 when network is unreachable.
+20. `wm_is_online` returns 0 when network is reachable.
+21. `wm_is_online` returns 1 when network is unreachable.
 
 ### Integration
-19. End-to-end: create `.srm` in fake save dir → `cd_sync_saves_to_repo` copies to repo → `cd_detect_changes` reports it → `se_stage_files` + `se_commit` creates commit → git log shows correct message → file at correct repo-relative path.
-20. Running the cycle a second time with no file changes produces no new commit.
-21. All tests pass under `busybox ash`.
+22. End-to-end outbound: create `.srm` in fake save dir → `cd_sync_saves_to_repo` copies to repo → `cd_detect_changes` reports it → `se_stage_files` + `se_commit` creates commit → git log shows correct message → file at correct repo-relative path.
+23. End-to-end inbound: commit a new `.srm` in a remote repo → `se_pull` fetches it → `cd_sync_repo_to_saves` copies it to the correct device save path.
+24. Running the outbound cycle a second time with no file changes produces no new commit.
+25. All tests pass under `busybox ash`.
 
 ---
 
@@ -237,6 +244,8 @@ Each module gets a dedicated test file. Tests are self-contained:
 - Re-copy without changes, verify `cd_detect_changes` reports nothing.
 - Verify non-`.srm` files are not copied.
 - Verify missing save directories are skipped.
+- Test `cd_sync_repo_to_saves`: place `.srm` files in repo, run sync, verify they appear at correct device paths.
+- Test `cd_sync_repo_to_saves`: verify device directories are created as needed.
 
 **Sync Engine tests** (`tests/unit/core/test_sync_engine.sh`):
 - Init a bare git repo + working clone. Stage and commit a file. Verify commit message format.
@@ -252,14 +261,15 @@ Each module gets a dedicated test file. Tests are self-contained:
 ### Integration Test
 
 **`tests/integration/test_detect_stage_commit.sh`:**
-1. Set up: local git repo, fake saves directory tree (NextUI layout), platform map loaded.
-2. Place `.srm` files in the fake save directories.
-3. Run `cd_sync_saves_to_repo` → `cd_detect_changes` → `se_stage_files` → `se_commit`.
+1. Set up: bare git repo + two working clones ("device A" and "device B"), fake saves directory tree (NextUI layout), platform map loaded.
+2. **Outbound sync:** Place `.srm` files in device A's fake save directories.
+3. Run `cd_sync_saves_to_repo` → `cd_detect_changes` → `se_stage_files` → `se_commit` → `se_push`.
 4. Verify: git log shows commit with expected message format.
 5. Verify: committed file exists at correct repo-relative path (e.g. `snes/super_metroid.srm`).
 6. Run the cycle again with no changes — verify no new commit is created.
 7. Modify one `.srm` file, run the cycle — verify only that file is in the new commit.
-8. Tear down: remove all temp dirs.
+8. **Inbound sync:** From device B's clone, `se_pull` → `cd_sync_repo_to_saves` → verify `.srm` appears at correct device save path.
+9. Tear down: remove all temp dirs.
 
 ---
 
@@ -281,7 +291,7 @@ This is fragile for arbitrary JSON but reliable for our controlled, schema-versi
 
 ## Open Questions
 
-1. **Reverse sync after pull.** After `se_pull` updates the repo working tree, saves need to be copied back to device directories (the inverse of `cd_sync_saves_to_repo`). Should this be a function in change_detector.sh now (e.g. `cd_sync_repo_to_saves`), or deferred entirely to Sprint 0.3/1.2 where conflict awareness is needed? **Recommendation:** Add the function signature now but implement it as a simple copy-back. Sprint 0.3 will add conflict guards around it.
+None — all resolved during spec review.
 
 ---
 
