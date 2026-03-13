@@ -2,17 +2,19 @@
 
 ## Roadmap Philosophy
 
-Small, modular sprints. Each sprint produces a testable, working increment. Platform clients are developed independently — they share core logic but have separate sprint tracks.
+Small, modular sprints. Each sprint produces a testable, working increment. All core sync logic is platform-agnostic, built on the Platform Abstraction Layer (PAL). Platform clients share core logic and provide only platform-specific entry points and configuration.
+
+**Ordering principle:** Each sprint is testable the moment it's complete. No sprint depends on hardware or infrastructure that doesn't exist yet. Automated tests use the test PAL; on-device validation uses the NextUI PAL.
 
 ---
 
-## Phase 0 — Foundation
+## Phase 0 — Foundation and Core Sync
 
-**Goal:** Repo structure, shared core logic, test harness. Everything the platform clients build on.
+**Goal:** PAL framework, enrollment, and all sync phases — fully tested, platform-agnostic. Everything a platform daemon needs to function.
 
 ### Sprint 0.1 — Repo Scaffolding and System Taxonomy
 
-**Status:** In Progress
+**Status:** Complete
 
 **Scope:**
 - Pivot repo from Ideal OS to Continuity
@@ -31,39 +33,88 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 
 ---
 
-### Sprint 0.2 — Cold Start Sync
+### Sprint 0.2 — Platform Abstraction Layer and Path Mapper
 
 **Status:** Planned
 
 **Scope:**
-- Implement core modules: `path_mapper.sh`, `sync_engine.sh`, `wifi_monitor.sh`
-- Implement cold start sync flow: first run with no prior state (no sentinel, no stored commit)
-- `cmp -s` all `.srm` files in both directions (device → repo, repo → device)
-- Write only files that actually differ
-- Create sentinel file and store commit hash after initial sync
-- Unit tests for all core functions
-- Integration test: cold start merge between device saves and repo saves
+- Define the PAL interface (`src/core/pal.sh`) — required variables, required functions, validator
+- Implement NextUI PAL (`src/platforms/nextui/pal_nextui.sh`)
+- Implement test PAL (`tests/fixtures/pal_test.sh`)
+- Implement path mapper (`src/core/path_mapper.sh`) — uses PAL for platform map selection
+- Unit tests proving same path mapper code works with both test PAL and NextUI PAL
 
 **Acceptance Criteria:**
-- Path mapper correctly translates all systems for all platforms
-- Cold start detects and syncs saves in both directions
-- Only differing files are written (identical files untouched)
-- Sentinel file created after successful cold start
-- Commit hash stored for future boot pull comparison
-- Sync engine stages, commits, and pushes changed files
-- WiFi monitor correctly reports online/offline
+- PAL validator catches missing variables and functions
+- NextUI PAL sets all required variables and implements all required functions
+- Test PAL provides synthetic environment for CI
+- Path mapper correctly translates paths for all 4 platforms
+- Path mapper round-trips: `repo_to_local(local_to_repo(path)) == path`
+- Paths with spaces (RetroArch Android) handled correctly
 - All tests pass under `busybox ash`
 
 **Dependencies:** Sprint 0.1 (taxonomy and platform maps)
 
+**Reference Specs:** `docs/design/pal.md`
+
 ---
 
-### Sprint 0.3 — Boot Pull
+### Sprint 0.3 — Enrollment
 
 **Status:** Planned
 
 **Scope:**
-- Implement boot pull sync: normal boot with existing sentinel and stored commit
+- Implement core enrollment logic (`src/core/enrollment.sh`) — clone repo, register device, store credentials, write device name
+- Implement NextUI enrollment trigger (`src/platforms/nextui/enroll_sd_card.sh`) — detect and import `.continuity/setup.json` from SD card
+- Implement test enrollment helper (`tests/fixtures/enroll_test.sh`) — scripted setup for CI (no SD card, no user interaction)
+- Implement sync engine (`src/core/sync_engine.sh`) — git clone, add, commit, push, pull (needed by enrollment for initial clone and device registration push)
+- Device registration in `.continuity/devices/<name>.json` (committed to repo)
+- Device name stored locally for PAL to read
+
+**Acceptance Criteria:**
+- Core enrollment: clones repo, writes device JSON, commits and pushes registration
+- NextUI enrollment: detects `setup.json` on SD card, imports credentials, deletes setup file
+- Test enrollment: scripted setup creates cloned repo with device registered
+- Device name persisted and readable by PAL on next boot
+- Credential stored at platform-appropriate location
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.2 (PAL, path mapper)
+
+---
+
+### Sprint 0.4 — Cold Start Sync
+
+**Status:** Planned
+
+**Scope:**
+- Implement cold start sync flow (`src/core/cold_start.sh`) — first run with no prior state (no sentinel, no stored commit)
+- `cmp -s` all `.srm` files in both directions (device → repo, repo → device)
+- Write only files that actually differ
+- Conflicting files (same game, different bytes): repo wins, device version preserved as `.<device_name>.local` and committed
+- Create sentinel file and store commit hash after initial sync
+- Unit tests for cold start flow
+- Integration test: cold start merge between device saves and repo saves
+
+**Acceptance Criteria:**
+- Cold start with empty repo + device saves: all device saves copied to repo, committed, pushed
+- Cold start with repo saves + empty device: all repo saves copied to device at correct paths
+- Cold start with identical saves on both sides: no unnecessary writes, no `.local` file
+- Cold start with differing saves: repo wins on device, device version preserved as `.<device_name>.local` in repo and committed
+- Sentinel file created after successful cold start
+- Commit hash stored for boot pull comparison
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.3 (enrollment — cloned repo must exist)
+
+---
+
+### Sprint 0.5 — Boot Pull
+
+**Status:** Planned
+
+**Scope:**
+- Implement boot pull sync (`src/core/boot_pull.sh`) — normal boot with existing sentinel and stored commit
 - `git diff --name-only` against stored commit to identify remote changes
 - Apply only changed remote saves to device
 - Update stored commit hash after pull
@@ -74,42 +125,42 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - Copies only changed saves to device (unchanged files untouched)
 - Updates stored commit hash after successful pull
 - No-op when no remote changes exist
+- Handles the case where remote has new systems/files not on device (creates dirs)
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.2 (core modules, sentinel/commit tracking)
+**Dependencies:** Sprint 0.4 (cold start — sentinel and commit tracking established)
 
 ---
 
-### Sprint 0.4 — Runtime Poll
+### Sprint 0.6 — Runtime Poll
 
 **Status:** Planned
 
 **Scope:**
-- Implement runtime change detection: `find -newer` sentinel + `cmp -s` candidates
-- Poll loop detects local `.srm` changes during gameplay
-- Stage, commit, and push confirmed changes
+- Implement runtime change detection (`src/core/runtime_poll.sh`) — `find -newer` sentinel + `cmp -s` candidates
+- Single poll cycle: detect local `.srm` changes, stage, commit, push confirmed changes
 - Update sentinel after each sync cycle
 - Unit and integration tests for runtime detection
 
 **Acceptance Criteria:**
 - `find -newer` sentinel identifies candidate changed files
-- `cmp -s` filters out false positives (touched but identical files)
+- `cmp -s` against repo copy filters out false positives (touched but identical)
 - Only truly changed files are committed and pushed
 - Sentinel updated after each successful sync cycle
 - Poll cycle is idempotent — no commit when nothing changed
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.3 (boot pull, sentinel lifecycle)
+**Dependencies:** Sprint 0.5 (boot pull — sentinel lifecycle in steady state)
 
 ---
 
-### Sprint 0.5 — Stale Boot Recovery
+### Sprint 0.7 — Stale Boot Recovery
 
 **Status:** Planned
 
 **Scope:**
-- Handle stale boot: sentinel exists but may be outdated (crash, unclean shutdown)
-- Combine boot pull (fetch remote changes) with catch-up scan (detect local changes missed by missing shutdown)
+- Handle stale boot (`src/core/stale_boot.sh`) — sentinel exists but may be outdated (crash, unclean shutdown)
+- Combine boot pull (fetch remote changes) with catch-up scan (detect local changes missed during interrupted session)
 - Reconcile both directions before resuming normal operation
 - Unit and integration tests for stale boot scenarios
 
@@ -120,83 +171,66 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - Transitions to normal steady-state after recovery
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.4 (runtime poll, full sentinel lifecycle)
+**Dependencies:** Sprint 0.6 (runtime poll — full sentinel lifecycle)
 
 ---
 
-### Sprint 0.6 — Conflict Handler
+### Sprint 0.8 — Conflict Handler
 
 **Status:** Planned
 
 **Scope:**
-- Implement `src/core/conflict_handler.sh` — detect merge conflicts, preserve both versions
-- Conflict metadata format (`.conflict` JSON files)
+- Implement `src/core/conflict_handler.sh` — detect git merge conflicts, preserve both versions with device attribution
+- Conflict metadata format (`.conflict` JSON files with device names, timestamps)
 - Resolution logic: `prompt`, `keep_newest`, `keep_device`
+- Enumerate existing `.local` files across the repo for resolution UI
 - Unit tests for conflict scenarios
 - Integration test: simulate two-device conflict, verify both saves preserved
 
 **Acceptance Criteria:**
-- Merge conflict on `.srm` file preserves both versions (`.local` + canonical)
+- Merge conflict on `.srm` file preserves both versions (`.<device_name>.local` + canonical)
 - Conflict metadata JSON written with device names and timestamps
-- Resolution removes conflict artifacts and commits result
+- Resolution removes `.local` and `.conflict` artifacts and commits result
+- Enumeration lists all `.local` files with device attribution
 - No save data is ever silently overwritten
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.5 (all sync phases operational)
+**Dependencies:** Sprint 0.7 (all sync phases operational)
 
 ---
 
-## Phase 1 — First Platform Client (NextUI / TrimUI Brick)
+## Phase 1 — NextUI Platform Client (TrimUI Brick)
 
-**Goal:** Working save sync on a TrimUI Brick. This is the proof of concept.
+**Goal:** Working save sync on a TrimUI Brick. Core sync is already built — this phase wraps it in platform-specific daemon lifecycle and user-facing UI.
 
-### Sprint 1.1 — Enrollment (SD Card Import)
-
-**Status:** Planned
-
-**Scope:**
-- Implement `src/enrollment/sd_card_import.sh` — detect and import `.continuity/setup.json` from SD card
-- Credential storage layout on device
-- Initial `git clone` of user's repo
-- Device registration in `.continuity/devices/`
-- Unit tests for import parsing, credential storage
-
-**Acceptance Criteria:**
-- Setup JSON detected on boot, credentials imported, setup file deleted
-- Repo cloned to device
-- Device JSON written to `.continuity/devices/`
-- All tests pass under `busybox ash`
-
-**Dependencies:** Sprint 0.2 (core modules for git clone)
-
----
-
-### Sprint 1.2 — NextUI Daemon
+### Sprint 1.1 — NextUI Daemon
 
 **Status:** Planned
 
 **Scope:**
 - Implement `src/platforms/nextui/continuity_daemon.sh` — main daemon loop
+- Sources NextUI PAL, then core modules
 - `auto.sh` hook integration for boot-time launch
 - PID file management (prevent duplicate instances)
-- Pull on boot, poll loop, push on change
-- Graceful shutdown on SIGTERM
+- Boot: detect state (cold start vs normal boot vs stale boot) → run appropriate sync phase
+- Runtime: poll loop calling `runtime_poll` at 30-second intervals
+- Graceful shutdown on SIGTERM (final push attempt, update sentinel)
 - Manual test checklist for on-device validation
 
 **Acceptance Criteria:**
 - Daemon starts on boot via auto.sh
-- Pulls latest saves on startup
-- Detects `.srm` changes within 30 seconds
+- Correctly dispatches to cold start, boot pull, or stale boot on startup
+- Runtime poll detects changes within 30 seconds
 - Commits and pushes when WiFi is available
 - Queues commits locally when offline, pushes when connectivity returns
-- Clean shutdown on SIGTERM
+- Clean shutdown on SIGTERM with sentinel update
 - Core tests pass under `busybox ash`
 
-**Dependencies:** Sprint 1.1 (enrollment), Sprint 0.6 (conflict handler)
+**Dependencies:** Sprint 0.8 (all core sync phases + conflict handler)
 
 ---
 
-### Sprint 1.3 — NextUI Tool PAK
+### Sprint 1.2 — NextUI Tool PAK
 
 **Status:** Planned
 
@@ -204,39 +238,39 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - Implement `src/platforms/nextui/Continuity.pak/launch.sh` — Tool PAK for sync UI
 - Status display: last sync time, pending changes, linked devices
 - Manual sync trigger
-- Conflict resolution UI (show conflicted saves, let user pick)
-- Enrollment via local web setup (alternative to SD card)
+- Conflict resolution UI (show conflicted saves with device attribution, let user pick)
 - Unlink device option
 
 **Acceptance Criteria:**
 - PAK appears in Tools menu on device
 - Shows sync status, last sync time
 - Manual sync pushes/pulls immediately
-- Conflict resolution presents both saves with device attribution
-- Web setup flow works from phone browser
+- Conflict resolution presents all `.local` files with device names
+- Unlink removes device registration and clears credentials
 
-**Dependencies:** Sprint 1.2 (daemon running)
+**Dependencies:** Sprint 1.1 (daemon running)
 
 ---
 
 ## Phase 2 — Second Platform (RetroDeck / Steam Deck)
 
-**Goal:** Cross-device sync works between TrimUI Brick and Steam Deck.
+**Goal:** Cross-device sync works between TrimUI Brick and Steam Deck. Validates the PAL architecture with a fundamentally different platform.
 
-### Sprint 2.1 — RetroDeck Setup Script
+### Sprint 2.1 — RetroDeck PAL and Enrollment
 
 **Scope:**
-- CLI setup script for RetroDeck (detect save paths, clone repo, install systemd service)
-- Path mapping validation for RetroDeck directory structure
-- systemd user service for daemon
+- Implement RetroDeck PAL (`src/platforms/retrodeck/pal_retrodeck.sh`)
+- CLI enrollment script (detect save paths, clone repo, register device)
+- systemd user service definition for daemon
+- Verify all core sync phases work with RetroDeck PAL (no core code changes expected)
 
 ---
 
 ### Sprint 2.2 — RetroDeck Daemon (inotify-based)
 
 **Scope:**
-- Daemon using `inotifywait` for event-driven change detection
-- Same core sync engine, different change detector
+- Daemon using `inotifywait` for event-driven change detection (replaces polling)
+- Same core sync engine, different detection trigger
 - Conflict resolution via desktop notification
 
 ---
@@ -245,8 +279,8 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 
 **Scope:**
 - End-to-end test: save on Brick → sync → verify on RetroDeck (and reverse)
-- Conflict scenario: save on both devices → verify both preserved
-- This sprint validates the entire architecture across two real platforms
+- Conflict scenario: save on both devices → verify both preserved with device attribution
+- This sprint validates the entire PAL architecture across two real platforms
 
 ---
 
@@ -254,11 +288,11 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 
 ### Sprint 3.1 — Onion OS Client (outline)
 
-Similar to NextUI. Different save paths, different boot hook mechanism. Same core engine.
+New PAL implementation + enrollment trigger. Nearly identical to NextUI. Different save paths, different boot hook mechanism. Same core engine. No core code changes.
 
 ### Sprint 3.2 — Android Client (outline)
 
-Java/Kotlin app wrapping the core sync logic. Native `FileObserver`, Material UI for status and conflicts.
+Java/Kotlin app implementing the PAL interface natively. JGit for git operations. `FileObserver` for change detection. Material UI for status and conflict resolution.
 
 ---
 
