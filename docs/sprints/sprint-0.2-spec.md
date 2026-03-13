@@ -15,6 +15,19 @@ Implement the four core shell modules that all platform clients build on: path m
 - `docs/design/architecture.md` — component descriptions and interfaces
 - `config/system_taxonomy.json` — canonical system names
 - `config/platform_maps/*.json` — per-platform path mappings
+- `upstream/nextui/src/` — NextUI source (platform constraints reference)
+
+---
+
+## Platform Constraints (from upstream analysis)
+
+Key findings from inspecting the NextUI source that affect this sprint:
+
+1. **No git binary on device.** NextUI does not ship git. A static git binary must be provided by the Continuity PAK (platform sprint concern, but the core engine must document this as a prerequisite).
+2. **FAT32/exFAT filesystem.** SD card mtime has 2-second granularity and is unreliable. `find -newer` is not a viable change detection strategy.
+3. **No file monitoring.** NextUI uses `stat()` for file size only, never mtime. No inotify or polling infrastructure exists.
+4. **Auto.sh hook path** is `/mnt/SDCARD/.userdata/tg5040/auto.sh` (runs before NextUI main loop in `MinUI.pak/launch.sh`).
+5. **Available shell utilities:** BusyBox ash with standard applets (`grep`, `sed`, `cp`, `mkdir`, `rm`, `cat`, `printf`, `touch`, `sleep`, `md5sum`/`sha256sum` TBD).
 
 ---
 
@@ -43,22 +56,31 @@ Translates between platform-specific save paths and canonical repo paths.
 
 ### 2. Change Detector (`src/core/change_detector.sh`)
 
-Polls for modified `.srm` files using `find -newer`.
+Detects changed `.srm` files by copying saves into the repo working tree and letting git identify what differs. This avoids any dependency on filesystem mtime (unreliable on FAT32).
+
+**Strategy: copy-and-diff**
+
+1. Walk all watched save directories (from `pm_list_watched_dirs`).
+2. For each `.srm` file found, compute the repo-relative path (via `pm_local_to_repo`).
+3. Copy the file into the corresponding location in the repo working tree.
+4. Ask git what changed: `git status --porcelain`.
+5. Return the list of changed repo-relative paths.
+
+Git compares file content by SHA hash — identical files produce no diff, no stage, no commit. This is inherently persistent across reboots because the repo working tree **is** the state tracker.
 
 **Functions:**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `cd_init` | `(marker_dir)` | Create marker directory and initial marker file if it doesn't exist |
-| `cd_detect_changes` | `(search_dirs, marker_file)` | Return list of `.srm` files modified since marker timestamp, one per line |
-| `cd_update_marker` | `(marker_file)` | Touch the marker file to current timestamp |
+| `cd_sync_saves_to_repo` | `(repo_dir)` | Copy all `.srm` files from device save dirs into the repo working tree at their mapped paths. Requires path mapper to be loaded. |
+| `cd_detect_changes` | `(repo_dir)` | Run `git status --porcelain` in the repo, return list of changed/new `.srm` files (repo-relative paths), one per line. Returns empty if nothing changed. |
 
 **Implementation notes:**
-- `search_dirs` is a newline-delimited list of directories (from `pm_list_watched_dirs`).
-- Uses `find <dir> -name "*.srm" -newer <marker> -type f` for each directory.
-- Directories that don't exist are silently skipped (a system with no saves yet).
-- Marker file lives outside the repo clone (e.g. `/tmp/continuity_marker`).
-- The caller is responsible for calling `cd_update_marker` after processing changes (not automatic — allows retry on failure).
+- `cd_sync_saves_to_repo` creates parent directories in the repo as needed (`mkdir -p`).
+- Only `.srm` files are copied — other files in save directories are ignored.
+- Directories that don't exist on the device are silently skipped (a system with no saves yet).
+- The copy is cheap: `.srm` files are 8–128 KB each, and typical game libraries have dozens, not thousands.
+- `cd_detect_changes` filters `git status` output to only `.srm` files (ignoring `.conflict`, `.local`, or other metadata that may exist in the repo).
 
 ---
 
@@ -90,7 +112,7 @@ Git operations layer: pull, stage, commit, push.
   ```
   If multiple files changed, the subject line lists the count: `3 saves updated`.
 - `se_push` captures stderr to distinguish network errors (retry) from other failures (abort).
-- On constrained devices, git may be BusyBox `git` or a minimal git binary. Avoid git features beyond basic add/commit/push/pull.
+- Git binary is a platform prerequisite. The core engine assumes `git` is on `PATH`. Platform PAKs are responsible for providing it (Sprint 1.x).
 
 ---
 
@@ -106,8 +128,8 @@ Connectivity check before network operations.
 
 **Implementation notes:**
 - Primary check: `ping -c 1 -W 3 github.com >/dev/null 2>&1`.
-- Fallback if `ping` is unavailable or blocked: attempt a TCP connection via `/dev/tcp` or `wget --spider`.
-- Does NOT check for WiFi specifically — just general network reachability.
+- Fallback if `ping` is unavailable or blocked: `wget --spider -q -T 3 https://github.com 2>/dev/null`.
+- Does NOT check for WiFi specifically — just general network reachability to GitHub.
 - Designed to be called before `se_push` and `se_pull`.
 
 ---
@@ -122,10 +144,14 @@ These are explicitly **not** part of Sprint 0.2:
 | Enrollment / credential import | 1.1 |
 | Platform daemon loops (NextUI, RetroDeck) | 1.2+ |
 | `.continuity/` metadata (config.json, device JSON) | 1.1 |
-| inotify-based change detection | 2.2 (RetroDeck) |
+| Shipping a static git binary for constrained devices | 1.2 (NextUI PAK) |
+| inotify-based change detection (RetroDeck) | 2.2 |
 | Android FileObserver | 3.2 |
+| Reverse sync (repo → device save dirs after pull) | 0.3 or 1.2 |
 
 `se_pull` returns a distinct code on divergence but does not resolve it — Sprint 0.3's conflict handler will consume that signal.
+
+**Note on reverse sync:** After `se_pull` brings new saves into the repo, they need to be copied back out to device save directories. This is the inverse of `cd_sync_saves_to_repo`. It's listed as out of scope because it requires conflict-awareness (what if the device file is also newer?), but we flag it here so Sprint 0.3 or 1.2 picks it up.
 
 ---
 
@@ -136,14 +162,14 @@ These are explicitly **not** part of Sprint 0.2:
 | File | Purpose |
 |------|---------|
 | `src/core/path_mapper.sh` | Platform path ↔ repo path translation |
-| `src/core/change_detector.sh` | `find -newer` polling for modified `.srm` files |
+| `src/core/change_detector.sh` | Copy-and-diff change detection using git status |
 | `src/core/sync_engine.sh` | Git add/commit/push/pull operations |
 | `src/core/wifi_monitor.sh` | Network connectivity check |
 | `tests/unit/core/test_path_mapper.sh` | Unit tests for path mapper |
 | `tests/unit/core/test_change_detector.sh` | Unit tests for change detector |
 | `tests/unit/core/test_sync_engine.sh` | Unit tests for sync engine |
 | `tests/unit/core/test_wifi_monitor.sh` | Unit tests for WiFi monitor |
-| `tests/integration/test_detect_stage_commit.sh` | Integration test: change detection → stage → commit cycle |
+| `tests/integration/test_detect_stage_commit.sh` | Integration test: full sync cycle (local only) |
 
 ### Files Modified
 
@@ -162,26 +188,29 @@ These are explicitly **not** part of Sprint 0.2:
 4. Unknown system directories produce a warning to stderr and return non-zero — not a crash.
 
 ### Change Detector
-5. `cd_detect_changes` finds `.srm` files modified after the marker timestamp.
-6. `cd_detect_changes` returns nothing when no files have been modified.
-7. Non-`.srm` files are ignored even if recently modified.
-8. Missing directories are silently skipped.
+5. `cd_sync_saves_to_repo` copies `.srm` files into correct repo paths.
+6. `cd_sync_saves_to_repo` ignores non-`.srm` files in save directories.
+7. `cd_sync_saves_to_repo` skips missing directories without error.
+8. `cd_detect_changes` returns changed paths when saves differ from repo HEAD.
+9. `cd_detect_changes` returns empty when saves are identical to repo HEAD.
+10. Newly added `.srm` files (no prior repo version) are detected as changes.
 
 ### Sync Engine
-9. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
-10. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
-11. `se_commit` with multiple files uses `N saves updated` as subject.
-12. `se_push` retries on network error with exponential backoff (verify via mock/log).
-13. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
-14. `se_has_unpushed_commits` correctly reports when local is ahead.
+11. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
+12. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
+13. `se_commit` with multiple files uses `N saves updated` as subject.
+14. `se_push` retries on network error with exponential backoff (verify via mock/log).
+15. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
+16. `se_has_unpushed_commits` correctly reports when local is ahead.
 
 ### WiFi Monitor
-15. `wm_is_online` returns 0 when network is reachable.
-16. `wm_is_online` returns 1 when network is unreachable.
+17. `wm_is_online` returns 0 when network is reachable.
+18. `wm_is_online` returns 1 when network is unreachable.
 
 ### Integration
-17. End-to-end: create `.srm` file → `cd_detect_changes` finds it → `pm_local_to_repo` maps it → `se_stage_files` + `se_commit` creates the commit → commit is in git log with correct message.
-18. All tests pass under `busybox ash`.
+19. End-to-end: create `.srm` in fake save dir → `cd_sync_saves_to_repo` copies to repo → `cd_detect_changes` reports it → `se_stage_files` + `se_commit` creates commit → git log shows correct message → file at correct repo-relative path.
+20. Running the cycle a second time with no file changes produces no new commit.
+21. All tests pass under `busybox ash`.
 
 ---
 
@@ -201,10 +230,13 @@ Each module gets a dedicated test file. Tests are self-contained:
 - Test with an unknown system directory.
 
 **Change Detector tests** (`tests/unit/core/test_change_detector.sh`):
-- Create marker, create files before and after marker, verify only post-marker files detected.
-- Verify non-`.srm` files are ignored.
-- Verify empty result when nothing changed.
-- Verify missing directory is skipped.
+- Set up: fake save directory tree, initialized git repo.
+- Copy saves to repo, verify files appear at correct paths.
+- Verify `cd_detect_changes` reports new files.
+- Modify a save file, re-copy, verify `cd_detect_changes` reports only the modified file.
+- Re-copy without changes, verify `cd_detect_changes` reports nothing.
+- Verify non-`.srm` files are not copied.
+- Verify missing save directories are skipped.
 
 **Sync Engine tests** (`tests/unit/core/test_sync_engine.sh`):
 - Init a bare git repo + working clone. Stage and commit a file. Verify commit message format.
@@ -215,17 +247,19 @@ Each module gets a dedicated test file. Tests are self-contained:
 
 **WiFi Monitor tests** (`tests/unit/core/test_wifi_monitor.sh`):
 - Verify `wm_is_online` returns 0 or 1 (basic smoke test — actual connectivity depends on environment).
-- If possible, mock by overriding `ping` with a function that fails.
+- Mock by overriding `ping`/`wget` with wrapper scripts that simulate failure.
 
 ### Integration Test
 
 **`tests/integration/test_detect_stage_commit.sh`:**
-1. Set up: local git repo, platform map (NextUI), marker file.
-2. Create a `.srm` file in the fake saves directory.
-3. Run change detection → path mapping → stage → commit.
+1. Set up: local git repo, fake saves directory tree (NextUI layout), platform map loaded.
+2. Place `.srm` files in the fake save directories.
+3. Run `cd_sync_saves_to_repo` → `cd_detect_changes` → `se_stage_files` → `se_commit`.
 4. Verify: git log shows commit with expected message format.
-5. Verify: committed file exists at correct repo-relative path.
-6. Tear down: remove all temp dirs.
+5. Verify: committed file exists at correct repo-relative path (e.g. `snes/super_metroid.srm`).
+6. Run the cycle again with no changes — verify no new commit is created.
+7. Modify one `.srm` file, run the cycle — verify only that file is in the new commit.
+8. Tear down: remove all temp dirs.
 
 ---
 
@@ -237,10 +271,8 @@ Since constrained devices lack `jq`, the core modules parse JSON with POSIX tool
 # Extract saves_root from platform map
 saves_root=$(grep '"saves_root"' "$map_file" | sed 's/.*: *"\(.*\)".*/\1/')
 
-# Build system mappings: iterate lines matching "canonical": "local_dir"
-grep '"[a-z]' "$map_file" | while read -r line; do
-    # parse key and value from "key": "value" pattern
-done
+# Build system mappings: iterate key/value pairs inside "system_paths"
+# The JSON is controlled and schema-versioned — no arbitrary nesting
 ```
 
 This is fragile for arbitrary JSON but reliable for our controlled, schema-versioned config files. If a future sprint needs general JSON parsing, we'll add a minimal parser or ship a static `jq` binary.
@@ -249,9 +281,7 @@ This is fragile for arbitrary JSON but reliable for our controlled, schema-versi
 
 ## Open Questions
 
-1. **Git binary on constrained devices:** TrimUI Brick ships a working `git` in NextUI. Should we verify the minimum git version required, or treat it as a platform prerequisite? **Recommendation:** Treat as prerequisite; document minimum version in platform notes.
-
-2. **Marker file location:** `/tmp/continuity_marker` will be lost on reboot. This means the first poll after boot will detect all `.srm` files as "changed." Is this acceptable, or should the marker persist on SD card? **Recommendation:** Accept re-scan on boot — it results in a harmless no-op commit if files haven't actually changed (git won't commit identical content), and boot already triggers a pull which updates the repo.
+1. **Reverse sync after pull.** After `se_pull` updates the repo working tree, saves need to be copied back to device directories (the inverse of `cd_sync_saves_to_repo`). Should this be a function in change_detector.sh now (e.g. `cd_sync_repo_to_saves`), or deferred entirely to Sprint 0.3/1.2 where conflict awareness is needed? **Recommendation:** Add the function signature now but implement it as a simple copy-back. Sprint 0.3 will add conflict guards around it.
 
 ---
 
