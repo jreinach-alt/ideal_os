@@ -1,4 +1,4 @@
-# Sprint 0.2 — Core Sync Engine (Shell)
+# Sprint 0.2 — Cold Start Sync
 
 **Status:** Draft — Awaiting Approval
 **Date:** 2026-03-13
@@ -6,7 +6,9 @@
 
 ## Goal
 
-Implement the four core shell modules that all platform clients build on: path mapping, change detection, sync engine (git operations), and WiFi monitoring. Everything in `src/core/` must be BusyBox ash compatible.
+Build the core shell modules (path mapping, sync engine, WiFi monitoring) and implement the **cold start sync flow** — the first-ever sync on a freshly enrolled device where no prior state exists. This is the foundation all subsequent sync phases build on.
+
+Cold start is the one scenario where a full bidirectional scan is justified. It happens exactly once per device.
 
 ---
 
@@ -19,15 +21,30 @@ Implement the four core shell modules that all platform clients build on: path m
 
 ---
 
+## Context: The Four Sync Phases
+
+Sprint 0.2 is the first of four sync-phase sprints. Each phase handles a distinct scenario with its own detection strategy, ordered by testability:
+
+| Sprint | Phase | When | Detection | Writes |
+|--------|-------|------|-----------|--------|
+| **0.2** | **Cold start** | First run ever, no sentinel/commit | `cmp -s` all files both directions | Only differing files |
+| 0.3 | Boot pull | Normal boot | `git diff --name-only` vs stored commit | Only remote changes → device |
+| 0.4 | Runtime poll | Every 30s during gameplay | `find -newer` sentinel → `cmp -s` candidates | Only confirmed changes → repo |
+| 0.5 | Stale boot | Boot after crash/unclean shutdown | Boot pull + catch-up scan | Only actual changes |
+
+Each sprint builds on the previous one. Cold start establishes the core modules, sentinel file, and commit tracking that all subsequent phases depend on.
+
+---
+
 ## Platform Constraints (from upstream analysis)
 
 Key findings from inspecting the NextUI source that affect this sprint:
 
 1. **No git binary on device.** NextUI does not ship git. A static git binary must be provided by the Continuity PAK (platform sprint concern, but the core engine must document this as a prerequisite).
-2. **FAT32/exFAT filesystem.** SD card mtime has 2-second granularity and is unreliable. `find -newer` is not a viable change detection strategy.
-3. **No file monitoring.** NextUI uses `stat()` for file size only, never mtime. No inotify or polling infrastructure exists.
+2. **FAT32/exFAT filesystem.** SD card mtime has 2-second granularity and is unreliable. Cold start uses `cmp -s` (byte comparison), not mtime.
+3. **No file monitoring.** No inotify or polling infrastructure exists on constrained devices.
 4. **Auto.sh hook path** is `/mnt/SDCARD/.userdata/tg5040/auto.sh` (runs before NextUI main loop in `MinUI.pak/launch.sh`).
-5. **Available shell utilities:** BusyBox ash with standard applets (`grep`, `sed`, `cp`, `mkdir`, `rm`, `cat`, `printf`, `touch`, `sleep`, `md5sum`/`sha256sum` TBD).
+5. **Available shell utilities:** BusyBox ash with standard applets (`grep`, `sed`, `cp`, `mkdir`, `rm`, `cat`, `printf`, `touch`, `sleep`, `cmp`, `md5sum`).
 
 ---
 
@@ -54,40 +71,7 @@ Translates between platform-specific save paths and canonical repo paths.
 
 ---
 
-### 2. Change Detector (`src/core/change_detector.sh`)
-
-Detects changed `.srm` files by copying saves into the repo working tree and letting git identify what differs. This avoids any dependency on filesystem mtime (unreliable on FAT32).
-
-**Strategy: copy-and-diff**
-
-1. Walk all watched save directories (from `pm_list_watched_dirs`).
-2. For each `.srm` file found, compute the repo-relative path (via `pm_local_to_repo`).
-3. Copy the file into the corresponding location in the repo working tree.
-4. Ask git what changed: `git status --porcelain`.
-5. Return the list of changed repo-relative paths.
-
-Git compares file content by SHA hash — identical files produce no diff, no stage, no commit. This is inherently persistent across reboots because the repo working tree **is** the state tracker.
-
-**Functions:**
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `cd_sync_saves_to_repo` | `(repo_dir)` | Copy all `.srm` files from device save dirs into the repo working tree at their mapped paths. Requires path mapper to be loaded. |
-| `cd_detect_changes` | `(repo_dir)` | Run `git status --porcelain` in the repo, return list of changed/new `.srm` files (repo-relative paths), one per line. Returns empty if nothing changed. |
-| `cd_sync_repo_to_saves` | `(repo_dir)` | Copy all `.srm` files from the repo working tree back out to device save dirs at their mapped paths. Used after `se_pull` to land incoming saves where the emulator expects them. |
-
-**Implementation notes:**
-- `cd_sync_saves_to_repo` creates parent directories in the repo as needed (`mkdir -p`).
-- `cd_sync_repo_to_saves` creates parent directories on the device as needed (`mkdir -p`).
-- Only `.srm` files are copied in both directions — other files are ignored.
-- Directories that don't exist on the device are silently skipped (a system with no saves yet).
-- The copy is cheap: `.srm` files are 8–128 KB each, and typical game libraries have dozens, not thousands.
-- `cd_detect_changes` filters `git status` output to only `.srm` files (ignoring `.conflict`, `.local`, or other metadata that may exist in the repo).
-- `cd_sync_repo_to_saves` does a simple overwrite for now. Sprint 0.3 will add conflict guards (e.g. skip copy if local file was also modified since last sync).
-
----
-
-### 3. Sync Engine (`src/core/sync_engine.sh`)
+### 2. Sync Engine (`src/core/sync_engine.sh`)
 
 Git operations layer: pull, stage, commit, push.
 
@@ -102,10 +86,12 @@ Git operations layer: pull, stage, commit, push.
 | `se_push` | `()` | `git push origin main`. Retries with exponential backoff (2s, 4s, 8s, 16s) on network failure. Returns 0 on success, 1 on persistent failure |
 | `se_has_staged_changes` | `()` | Returns 0 if there are staged changes, 1 if clean |
 | `se_has_unpushed_commits` | `()` | Returns 0 if local is ahead of remote, 1 if up to date |
+| `se_get_head_commit` | `()` | Print current HEAD commit hash to stdout |
 
 **Implementation notes:**
 - All git commands run with `GIT_DIR` and `GIT_WORK_TREE` pointing to the repo clone, not the current working directory.
-- `se_pull` uses `--ff-only` to avoid auto-merge. If fast-forward fails, it returns 1 so the caller (or a future conflict handler) can deal with it. Sprint 0.2 does NOT implement conflict resolution — that's Sprint 0.3.
+- `se_pull` uses `--ff-only` to avoid auto-merge. If fast-forward fails, it returns 1 so the caller (or a future conflict handler) can deal with it. Sprint 0.2 does NOT implement conflict resolution — that's Sprint 0.6.
+- `se_get_head_commit` is used to store the commit hash after sync (for Sprint 0.3's boot pull comparison).
 - Commit message format:
   ```
   <system>/<filename> updated
@@ -119,7 +105,7 @@ Git operations layer: pull, stage, commit, push.
 
 ---
 
-### 4. WiFi Monitor (`src/core/wifi_monitor.sh`)
+### 3. WiFi Monitor (`src/core/wifi_monitor.sh`)
 
 Connectivity check before network operations.
 
@@ -137,24 +123,95 @@ Connectivity check before network operations.
 
 ---
 
+### 4. Cold Start Sync (`src/core/cold_start.sh`)
+
+First-run sync when no prior state exists. This is the only time a full bidirectional scan is performed.
+
+**Preconditions:**
+- Repo has been cloned (enrollment is complete, Sprint 1.1 concern)
+- Path mapper is loaded with the correct platform map
+- No sentinel file exists (first run indicator)
+- No stored commit hash exists
+
+**Flow:**
+
+```
+cold_start_sync(repo_dir)
+  1. se_pull                          # Get latest from remote
+  2. Scan repo for .srm files         # What the repo has (from other devices)
+  3. Scan device save dirs for .srm   # What the device has (local play)
+  4. For each repo .srm:
+       repo_path → local_path (pm_repo_to_local)
+       if local file doesn't exist:
+         cp repo → device              # New save from another device
+       elif ! cmp -s repo_file local_file:
+         cp repo → device              # Repo wins on cold start (latest from network)
+         cp local → repo as .local     # Preserve device version
+  5. For each device .srm not in repo:
+       local_path → repo_path (pm_local_to_repo)
+       cp device → repo                # New save, push it up
+  6. cd_detect_changes + se_stage + se_commit + se_push
+  7. Store HEAD commit hash           # For Sprint 0.3 boot pull
+  8. Create sentinel file             # Marks cold start complete
+```
+
+**Functions:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `cs_run` | `(repo_dir)` | Execute the full cold start sync flow |
+| `cs_is_cold_start` | `(repo_dir)` | Returns 0 if no sentinel exists (cold start needed), 1 if sentinel present |
+| `cs_store_commit` | `(repo_dir, commit_hash)` | Write commit hash to `.continuity/last_known_commit` in the repo |
+| `cs_read_commit` | `(repo_dir)` | Read stored commit hash, print to stdout. Returns 1 if not found |
+| `cs_create_sentinel` | `(repo_dir)` | Create sentinel file at `.continuity/sentinel` |
+
+**Implementation notes:**
+- The sentinel file and commit hash live inside the repo working tree under `.continuity/`. This directory is gitignored — it's local device state, not synced.
+- Step 4 conflict behavior (repo wins, local preserved as `.local`): This is a conservative cold start default. The user has saves from another device in the repo AND local saves — we take the repo version (most likely to be recent, since it came from an actively syncing device) but preserve the local copy. Sprint 0.6 will add proper conflict resolution UI.
+- `cmp -s` is a byte-level comparison — reliable on any filesystem, no mtime dependency.
+- The full scan is O(number of saves × number of systems). With typical libraries (dozens of games, ~15 systems), this completes in under a second even on constrained devices.
+- `.continuity/` directory is created by `cs_run` if it doesn't exist.
+
+---
+
+### 5. Change Detector helpers (`src/core/change_detector.sh`)
+
+Utility functions used by cold start (and later by other sync phases).
+
+**Functions:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `cd_detect_changes` | `(repo_dir)` | Run `git status --porcelain` in the repo, return list of changed/new `.srm` files (repo-relative paths), one per line. Returns empty if nothing changed. |
+| `cd_list_repo_saves` | `(repo_dir)` | List all `.srm` files in the repo working tree (repo-relative paths), one per line |
+| `cd_list_device_saves` | `()` | List all `.srm` files across all watched device save dirs (local paths), one per line. Requires path mapper to be loaded. |
+
+**Implementation notes:**
+- `cd_detect_changes` filters `git status` output to only `.srm` files.
+- `cd_list_repo_saves` uses `find` within the repo working tree, excluding `.git/` and `.continuity/`.
+- `cd_list_device_saves` walks directories from `pm_list_watched_dirs`, skipping dirs that don't exist.
+- These are lower-level helpers. The cold start flow in `cs_run` uses them but also does its own `cmp -s` comparisons.
+
+---
+
 ## Out of Scope
 
 These are explicitly **not** part of Sprint 0.2:
 
 | Item | Sprint |
 |------|--------|
-| Conflict detection and resolution | 0.3 |
+| Boot pull detection (`git diff --name-only`) | 0.3 |
+| Runtime poll (`find -newer` + `cmp -s`) | 0.4 |
+| Stale boot recovery | 0.5 |
+| Conflict detection and resolution UI | 0.6 |
 | Enrollment / credential import | 1.1 |
 | Platform daemon loops (NextUI, RetroDeck) | 1.2+ |
-| `.continuity/` metadata (config.json, device JSON) | 1.1 |
+| Device registration in `.continuity/devices/` | 1.1 |
 | Shipping a static git binary for constrained devices | 1.2 (NextUI PAK) |
 | inotify-based change detection (RetroDeck) | 2.2 |
 | Android FileObserver | 3.2 |
-| Conflict-aware reverse sync (skip if local also modified) | 0.3 |
 
-`se_pull` returns a distinct code on divergence but does not resolve it — Sprint 0.3's conflict handler will consume that signal.
-
-`cd_sync_repo_to_saves` performs a simple overwrite copy-back after pull. Sprint 0.3 will wrap this with conflict detection (what if the device file was also modified since last sync?).
+The cold start flow uses a simple "repo wins, local preserved" strategy for conflicts. Full conflict resolution with user choice is Sprint 0.6.
 
 ---
 
@@ -165,20 +222,22 @@ These are explicitly **not** part of Sprint 0.2:
 | File | Purpose |
 |------|---------|
 | `src/core/path_mapper.sh` | Platform path ↔ repo path translation |
-| `src/core/change_detector.sh` | Copy-and-diff change detection using git status |
+| `src/core/change_detector.sh` | Git status helpers and save file listing |
 | `src/core/sync_engine.sh` | Git add/commit/push/pull operations |
 | `src/core/wifi_monitor.sh` | Network connectivity check |
+| `src/core/cold_start.sh` | Cold start sync flow (first run, full bidirectional scan) |
 | `tests/unit/core/test_path_mapper.sh` | Unit tests for path mapper |
 | `tests/unit/core/test_change_detector.sh` | Unit tests for change detector |
 | `tests/unit/core/test_sync_engine.sh` | Unit tests for sync engine |
 | `tests/unit/core/test_wifi_monitor.sh` | Unit tests for WiFi monitor |
-| `tests/integration/test_detect_stage_commit.sh` | Integration test: full sync cycle (local only) |
+| `tests/unit/core/test_cold_start.sh` | Unit tests for cold start sync flow |
+| `tests/integration/test_cold_start_sync.sh` | Integration test: full cold start merge scenario |
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `docs/roadmap.md` | Update Sprint 0.2 status to "In Progress" / "Complete" |
+| `docs/roadmap.md` | Updated sprint breakdown (0.2–0.5 sync phases, 0.6 conflict handler) |
 
 ---
 
@@ -191,33 +250,39 @@ These are explicitly **not** part of Sprint 0.2:
 4. Unknown system directories produce a warning to stderr and return non-zero — not a crash.
 
 ### Change Detector
-5. `cd_sync_saves_to_repo` copies `.srm` files into correct repo paths.
-6. `cd_sync_saves_to_repo` ignores non-`.srm` files in save directories.
-7. `cd_sync_saves_to_repo` skips missing directories without error.
-8. `cd_detect_changes` returns changed paths when saves differ from repo HEAD.
-9. `cd_detect_changes` returns empty when saves are identical to repo HEAD.
-10. Newly added `.srm` files (no prior repo version) are detected as changes.
-11. `cd_sync_repo_to_saves` copies `.srm` files from repo to correct device save paths.
-12. `cd_sync_repo_to_saves` creates device directories as needed.
-13. `cd_sync_repo_to_saves` ignores non-`.srm` files in repo.
+5. `cd_detect_changes` returns changed paths when saves differ from repo HEAD.
+6. `cd_detect_changes` returns empty when saves are identical to repo HEAD.
+7. `cd_list_repo_saves` lists all `.srm` files in repo, excludes `.git/` and `.continuity/`.
+8. `cd_list_device_saves` lists all `.srm` files across watched dirs, skips missing dirs.
 
 ### Sync Engine
-14. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
-15. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
-16. `se_commit` with multiple files uses `N saves updated` as subject.
-17. `se_push` retries on network error with exponential backoff (verify via mock/log).
-18. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
-19. `se_has_unpushed_commits` correctly reports when local is ahead.
+9. `se_stage_files` + `se_commit` creates a git commit with the correct message format.
+10. `se_commit` with a single file uses `<system>/<filename> updated` as subject.
+11. `se_commit` with multiple files uses `N saves updated` as subject.
+12. `se_push` retries on network error with exponential backoff (verify via mock/log).
+13. `se_pull` returns 0 on success, 1 on divergence, 2 on network error.
+14. `se_has_unpushed_commits` correctly reports when local is ahead.
+15. `se_get_head_commit` returns current HEAD hash.
 
 ### WiFi Monitor
-20. `wm_is_online` returns 0 when network is reachable.
-21. `wm_is_online` returns 1 when network is unreachable.
+16. `wm_is_online` returns 0 when network is reachable.
+17. `wm_is_online` returns 1 when network is unreachable.
+
+### Cold Start
+18. `cs_is_cold_start` returns 0 when no sentinel exists, 1 when it does.
+19. Cold start with empty repo + device saves: all device saves copied to repo, committed, pushed.
+20. Cold start with repo saves + empty device: all repo saves copied to device save dirs at correct paths.
+21. Cold start with both sides having the same save (identical bytes): no unnecessary writes, no `.local` file created.
+22. Cold start with both sides having the same save (different bytes): repo version wins on device, device version preserved as `.local` in repo.
+23. Cold start with device-only saves and repo-only saves: both directions synced correctly.
+24. Sentinel file created after successful cold start.
+25. Commit hash stored after successful cold start.
+26. `.continuity/` directory created if it doesn't exist.
 
 ### Integration
-22. End-to-end outbound: create `.srm` in fake save dir → `cd_sync_saves_to_repo` copies to repo → `cd_detect_changes` reports it → `se_stage_files` + `se_commit` creates commit → git log shows correct message → file at correct repo-relative path.
-23. End-to-end inbound: commit a new `.srm` in a remote repo → `se_pull` fetches it → `cd_sync_repo_to_saves` copies it to the correct device save path.
-24. Running the outbound cycle a second time with no file changes produces no new commit.
-25. All tests pass under `busybox ash`.
+27. End-to-end cold start: set up bare repo with saves from "device A", set up "device B" with different saves + some overlapping saves. Run `cs_run` on device B. Verify: device B gets repo saves, repo gets device B's unique saves, overlapping saves resolved correctly, sentinel and commit hash created.
+28. Running `cs_is_cold_start` after cold start returns 1 (not a cold start — sentinel exists).
+29. All tests pass under `busybox ash`.
 
 ---
 
@@ -237,39 +302,46 @@ Each module gets a dedicated test file. Tests are self-contained:
 - Test with an unknown system directory.
 
 **Change Detector tests** (`tests/unit/core/test_change_detector.sh`):
-- Set up: fake save directory tree, initialized git repo.
-- Copy saves to repo, verify files appear at correct paths.
-- Verify `cd_detect_changes` reports new files.
-- Modify a save file, re-copy, verify `cd_detect_changes` reports only the modified file.
-- Re-copy without changes, verify `cd_detect_changes` reports nothing.
-- Verify non-`.srm` files are not copied.
-- Verify missing save directories are skipped.
-- Test `cd_sync_repo_to_saves`: place `.srm` files in repo, run sync, verify they appear at correct device paths.
-- Test `cd_sync_repo_to_saves`: verify device directories are created as needed.
+- Set up: initialized git repo with some `.srm` files.
+- Verify `cd_detect_changes` reports new/modified files.
+- Verify `cd_detect_changes` reports nothing when repo is clean.
+- Verify `cd_list_repo_saves` finds all `.srm` files, excludes `.git/` and `.continuity/`.
+- Verify `cd_list_device_saves` finds saves across multiple system dirs, skips missing dirs.
 
 **Sync Engine tests** (`tests/unit/core/test_sync_engine.sh`):
 - Init a bare git repo + working clone. Stage and commit a file. Verify commit message format.
 - Test `se_has_staged_changes` and `se_has_unpushed_commits`.
 - Test `se_pull` fast-forward success.
 - Test `se_pull` divergence detection (commit on both sides).
+- Test `se_get_head_commit` returns correct hash.
 - Push/pull between two local repos (no network needed).
 
 **WiFi Monitor tests** (`tests/unit/core/test_wifi_monitor.sh`):
 - Verify `wm_is_online` returns 0 or 1 (basic smoke test — actual connectivity depends on environment).
 - Mock by overriding `ping`/`wget` with wrapper scripts that simulate failure.
 
+**Cold Start tests** (`tests/unit/core/test_cold_start.sh`):
+- `cs_is_cold_start` returns 0 with no sentinel, 1 with sentinel.
+- `cs_store_commit` / `cs_read_commit` round-trip correctly.
+- `cs_create_sentinel` creates the sentinel file.
+- Cold start with empty repo: device saves synced to repo.
+- Cold start with empty device: repo saves synced to device.
+- Cold start with identical files on both sides: no unnecessary writes.
+- Cold start with different files on both sides: repo wins, local preserved as `.local`.
+
 ### Integration Test
 
-**`tests/integration/test_detect_stage_commit.sh`:**
-1. Set up: bare git repo + two working clones ("device A" and "device B"), fake saves directory tree (NextUI layout), platform map loaded.
-2. **Outbound sync:** Place `.srm` files in device A's fake save directories.
-3. Run `cd_sync_saves_to_repo` → `cd_detect_changes` → `se_stage_files` → `se_commit` → `se_push`.
-4. Verify: git log shows commit with expected message format.
-5. Verify: committed file exists at correct repo-relative path (e.g. `snes/super_metroid.srm`).
-6. Run the cycle again with no changes — verify no new commit is created.
-7. Modify one `.srm` file, run the cycle — verify only that file is in the new commit.
-8. **Inbound sync:** From device B's clone, `se_pull` → `cd_sync_repo_to_saves` → verify `.srm` appears at correct device save path.
-9. Tear down: remove all temp dirs.
+**`tests/integration/test_cold_start_sync.sh`:**
+1. Set up: bare git repo as "remote". Clone to "device A" working dir. Commit some `.srm` files from device A and push.
+2. Clone to "device B" working dir. Create a fake device B save directory tree (NextUI layout) with some overlapping and some unique `.srm` files.
+3. Load NextUI platform map. Run `cs_run` on device B.
+4. Verify: repo now has device B's unique saves.
+5. Verify: device B's save dirs now have device A's saves.
+6. Verify: overlapping saves with different content — device has repo version, repo has `.local` backup.
+7. Verify: overlapping saves with identical content — no `.local` file created.
+8. Verify: sentinel exists, stored commit hash matches HEAD.
+9. Verify: `cs_is_cold_start` now returns 1.
+10. Tear down: remove all temp dirs.
 
 ---
 
@@ -291,13 +363,13 @@ This is fragile for arbitrary JSON but reliable for our controlled, schema-versi
 
 ## Open Questions
 
-None — all resolved during spec review.
+1. **`.local` file naming convention for cold start conflicts.** Current proposal: `snes/super_metroid.srm.local`. Is this clear enough, or should it include the device name (e.g. `snes/super_metroid.srm.my-brick.local`)? Sprint 0.6 will formalize conflict metadata, but we need a workable convention now.
 
 ---
 
 ## Definition of Done
 
-- [ ] All 4 core modules implemented in `src/core/`.
+- [ ] All 5 core modules implemented in `src/core/`.
 - [ ] All functions documented with usage comments at top of file.
 - [ ] All unit tests pass under `busybox ash`.
 - [ ] Integration test passes under `busybox ash`.

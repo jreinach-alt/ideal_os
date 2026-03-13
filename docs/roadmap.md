@@ -31,21 +31,25 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 
 ---
 
-### Sprint 0.2 — Core Sync Engine (Shell)
+### Sprint 0.2 — Cold Start Sync
 
 **Status:** Planned
 
 **Scope:**
-- Implement `src/core/path_mapper.sh` — translates platform save paths ↔ repo paths
-- Implement `src/core/change_detector.sh` — `find -newer` polling for modified `.srm` files
-- Implement `src/core/sync_engine.sh` — git add, commit, push, pull operations
-- Implement `src/core/wifi_monitor.sh` — connectivity check before network operations
+- Implement core modules: `path_mapper.sh`, `sync_engine.sh`, `wifi_monitor.sh`
+- Implement cold start sync flow: first run with no prior state (no sentinel, no stored commit)
+- `cmp -s` all `.srm` files in both directions (device → repo, repo → device)
+- Write only files that actually differ
+- Create sentinel file and store commit hash after initial sync
 - Unit tests for all core functions
-- Integration test: detect change → stage → commit cycle (local only, no push)
+- Integration test: cold start merge between device saves and repo saves
 
 **Acceptance Criteria:**
 - Path mapper correctly translates all systems for all platforms
-- Change detector finds modified `.srm` files after marker timestamp
+- Cold start detects and syncs saves in both directions
+- Only differing files are written (identical files untouched)
+- Sentinel file created after successful cold start
+- Commit hash stored for future boot pull comparison
 - Sync engine stages, commits, and pushes changed files
 - WiFi monitor correctly reports online/offline
 - All tests pass under `busybox ash`
@@ -54,7 +58,73 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 
 ---
 
-### Sprint 0.3 — Conflict Handler
+### Sprint 0.3 — Boot Pull
+
+**Status:** Planned
+
+**Scope:**
+- Implement boot pull sync: normal boot with existing sentinel and stored commit
+- `git diff --name-only` against stored commit to identify remote changes
+- Apply only changed remote saves to device
+- Update stored commit hash after pull
+- Unit and integration tests for boot pull flow
+
+**Acceptance Criteria:**
+- Detects remote changes since last stored commit
+- Copies only changed saves to device (unchanged files untouched)
+- Updates stored commit hash after successful pull
+- No-op when no remote changes exist
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.2 (core modules, sentinel/commit tracking)
+
+---
+
+### Sprint 0.4 — Runtime Poll
+
+**Status:** Planned
+
+**Scope:**
+- Implement runtime change detection: `find -newer` sentinel + `cmp -s` candidates
+- Poll loop detects local `.srm` changes during gameplay
+- Stage, commit, and push confirmed changes
+- Update sentinel after each sync cycle
+- Unit and integration tests for runtime detection
+
+**Acceptance Criteria:**
+- `find -newer` sentinel identifies candidate changed files
+- `cmp -s` filters out false positives (touched but identical files)
+- Only truly changed files are committed and pushed
+- Sentinel updated after each successful sync cycle
+- Poll cycle is idempotent — no commit when nothing changed
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.3 (boot pull, sentinel lifecycle)
+
+---
+
+### Sprint 0.5 — Stale Boot Recovery
+
+**Status:** Planned
+
+**Scope:**
+- Handle stale boot: sentinel exists but may be outdated (crash, unclean shutdown)
+- Combine boot pull (fetch remote changes) with catch-up scan (detect local changes missed by missing shutdown)
+- Reconcile both directions before resuming normal operation
+- Unit and integration tests for stale boot scenarios
+
+**Acceptance Criteria:**
+- Detects stale state (sentinel present but no clean shutdown marker)
+- Pulls remote changes AND scans for local changes
+- Correctly reconciles both directions without data loss
+- Transitions to normal steady-state after recovery
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 0.4 (runtime poll, full sentinel lifecycle)
+
+---
+
+### Sprint 0.6 — Conflict Handler
 
 **Status:** Planned
 
@@ -72,7 +142,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - No save data is ever silently overwritten
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.2 (sync engine)
+**Dependencies:** Sprint 0.5 (all sync phases operational)
 
 ---
 
@@ -97,7 +167,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - Device JSON written to `.continuity/devices/`
 - All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.2 (sync engine for git clone)
+**Dependencies:** Sprint 0.2 (core modules for git clone)
 
 ---
 
@@ -122,7 +192,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. Plat
 - Clean shutdown on SIGTERM
 - Core tests pass under `busybox ash`
 
-**Dependencies:** Sprint 1.1 (enrollment), Sprint 0.3 (conflict handler)
+**Dependencies:** Sprint 1.1 (enrollment), Sprint 0.6 (conflict handler)
 
 ---
 
