@@ -146,11 +146,11 @@ cold_start_sync(repo_dir)
          cp repo → device              # New save from another device
        elif ! cmp -s repo_file local_file:
          cp repo → device              # Repo wins on cold start (latest from network)
-         cp local → repo as .local     # Preserve device version
+         cp local → repo as .<device_name>.local  # Preserve device version (committed)
   5. For each device .srm not in repo:
        local_path → repo_path (pm_local_to_repo)
        cp device → repo                # New save, push it up
-  6. cd_detect_changes + se_stage + se_commit + se_push
+  6. Stage and commit all changes (including .local files) + push
   7. Store HEAD commit hash           # For Sprint 0.3 boot pull
   8. Create sentinel file             # Marks cold start complete
 ```
@@ -167,7 +167,8 @@ cold_start_sync(repo_dir)
 
 **Implementation notes:**
 - The sentinel file and commit hash live inside the repo working tree under `.continuity/`. This directory is gitignored — it's local device state, not synced.
-- Step 4 conflict behavior (repo wins, local preserved as `.local`): This is a conservative cold start default. The user has saves from another device in the repo AND local saves — we take the repo version (most likely to be recent, since it came from an actively syncing device) but preserve the local copy. Sprint 0.6 will add proper conflict resolution UI.
+- **Conflict file naming:** `<save>.srm.<device_name>.local` — e.g. `snes/super_metroid.srm.my-brick.local`. The device name is included so that when multiple devices enroll against the same repo, each device's conflicting version is distinguishable. These `.local` files are **committed to the repo**, not gitignored, so they're visible to all devices. This is key for the Steam Deck resolution app (Sprint 0.6): it can enumerate all `.local` files, let the user compare each device's save, and pick the authoritative version.
+- Step 4 conflict behavior (repo wins, local preserved as `.<device_name>.local`): This is a conservative cold start default. The user has saves from another device in the repo AND local saves — we take the repo version (most likely to be recent, since it came from an actively syncing device) but preserve the local copy with device attribution. Sprint 0.6 will add proper conflict resolution UI.
 - `cmp -s` is a byte-level comparison — reliable on any filesystem, no mtime dependency.
 - The full scan is O(number of saves × number of systems). With typical libraries (dozens of games, ~15 systems), this completes in under a second even on constrained devices.
 - `.continuity/` directory is created by `cs_run` if it doesn't exist.
@@ -211,7 +212,7 @@ These are explicitly **not** part of Sprint 0.2:
 | inotify-based change detection (RetroDeck) | 2.2 |
 | Android FileObserver | 3.2 |
 
-The cold start flow uses a simple "repo wins, local preserved" strategy for conflicts. Full conflict resolution with user choice is Sprint 0.6.
+The cold start flow uses a simple "repo wins, device version preserved as `.<device_name>.local`" strategy for conflicts. `.local` files are committed to the repo so all devices can see them. Full conflict resolution — where the Steam Deck app enumerates `.local` files and lets the user compare saves across devices — is Sprint 0.6.
 
 ---
 
@@ -273,7 +274,7 @@ The cold start flow uses a simple "repo wins, local preserved" strategy for conf
 19. Cold start with empty repo + device saves: all device saves copied to repo, committed, pushed.
 20. Cold start with repo saves + empty device: all repo saves copied to device save dirs at correct paths.
 21. Cold start with both sides having the same save (identical bytes): no unnecessary writes, no `.local` file created.
-22. Cold start with both sides having the same save (different bytes): repo version wins on device, device version preserved as `.local` in repo.
+22. Cold start with both sides having the same save (different bytes): repo version wins on device, device version preserved as `.<device_name>.local` in repo and committed.
 23. Cold start with device-only saves and repo-only saves: both directions synced correctly.
 24. Sentinel file created after successful cold start.
 25. Commit hash stored after successful cold start.
@@ -327,7 +328,7 @@ Each module gets a dedicated test file. Tests are self-contained:
 - Cold start with empty repo: device saves synced to repo.
 - Cold start with empty device: repo saves synced to device.
 - Cold start with identical files on both sides: no unnecessary writes.
-- Cold start with different files on both sides: repo wins, local preserved as `.local`.
+- Cold start with different files on both sides: repo wins, local preserved as `.<device_name>.local` and committed.
 
 ### Integration Test
 
@@ -337,7 +338,7 @@ Each module gets a dedicated test file. Tests are self-contained:
 3. Load NextUI platform map. Run `cs_run` on device B.
 4. Verify: repo now has device B's unique saves.
 5. Verify: device B's save dirs now have device A's saves.
-6. Verify: overlapping saves with different content — device has repo version, repo has `.local` backup.
+6. Verify: overlapping saves with different content — device has repo version, repo has `.<device_name>.local` backup committed.
 7. Verify: overlapping saves with identical content — no `.local` file created.
 8. Verify: sentinel exists, stored commit hash matches HEAD.
 9. Verify: `cs_is_cold_start` now returns 1.
@@ -363,7 +364,7 @@ This is fragile for arbitrary JSON but reliable for our controlled, schema-versi
 
 ## Open Questions
 
-1. **`.local` file naming convention for cold start conflicts.** Current proposal: `snes/super_metroid.srm.local`. Is this clear enough, or should it include the device name (e.g. `snes/super_metroid.srm.my-brick.local`)? Sprint 0.6 will formalize conflict metadata, but we need a workable convention now.
+None — all resolved during spec review.
 
 ---
 
