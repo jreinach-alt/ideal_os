@@ -394,16 +394,12 @@ A full end-to-end test using real git operations, a local bare remote, and multi
 
 ---
 
-## Open Questions
+## Resolved Questions
 
-1. **Should `rp_update_sentinel` be called when there are no candidates (step 2 early return)?**
-   The current spec says no — if nothing was scanned, the sentinel does not advance. This means that on the next cycle, the same time window is re-scanned and `find -newer` may return the same results (or more). The alternative is to always advance the sentinel at the start of every cycle, regardless of outcome, which risks losing a short window of changes on FAT32 if mtime granularity causes a file modified right at sentinel-touch time to be missed. The conservative approach (advance only after a scan) is safer for FAT32 and is what this spec specifies. Confirm before implementation.
+1. **Should `rp_update_sentinel` be called when there are no candidates (step 2 early return)?** **Resolved — no.** The spec is correct. If nothing was scanned, the sentinel does not advance. This is safer for FAT32 (avoids losing changes modified right at the sentinel-touch boundary). Re-scanning the same window is harmless since `find -newer` returns the same nothing.
 
-2. **Handling `se_push` return value 2 (deferred) when `pal_is_online` said we're online.**
-   The spec treats this as a non-fatal warning. It can occur if network drops between the `pal_is_online` check and the `git push`. The commit is already made locally. On the next cycle, `se_has_unpushed_commits` will return 0, but `rp_run` does not currently check for pending unpushed commits at the start of a cycle — it only pushes if the current cycle created a commit. Should `rp_run` check `se_has_unpushed_commits` at the start and attempt a push if commits are pending from a prior cycle? This would be a natural extension but is left to Sprint 1.1 (daemon lifecycle) where the overall startup flow can address pending pushes. Confirm this deferral is acceptable.
+2. **Handling `se_push` return value 2 (deferred) when `pal_is_online` said we're online.** **Resolved — treat as non-fatal warning, defer pending-push retry to Sprint 1.1.** The commit exists locally. The daemon lifecycle (Sprint 1.1) will handle "push pending commits on connectivity restore." The runtime poll is deliberately minimal: one cycle, no cross-cycle state.
 
-3. **`rp_confirm_changes` and `pm_local_to_repo` for new files.**
-   If a new `.srm` appears on the device in a system directory that IS known to the path mapper, `pm_local_to_repo` returns the correct repo path, but `$repo_dir/$repo_path` does not yet exist. The spec says to treat a missing repo copy as a confirmed change. This is correct behavior. Confirm the implementation should use `cmp -s "$device_path" "$repo_file" || echo "$device_path"` (which prints the path if either the files differ OR if `$repo_file` doesn't exist, since `cmp` returns non-zero in both cases).
+3. **`rp_confirm_changes` and `pm_local_to_repo` for new files.** **Resolved — confirmed.** `cmp -s "$device_path" "$repo_file"` returns non-zero when `$repo_file` doesn't exist, so the `cmp -s ... || echo "$device_path"` pattern correctly treats new files (no repo copy) as confirmed changes. No special-casing needed.
 
-4. **`se_commit` argument convention from Sprint 0.3.**
-   Sprint 0.3 defined `se_commit(file_list)` where `file_list` is a newline-delimited string of repo-relative paths. `cd_detect_changes` (Sprint 0.4) outputs repo-relative paths, one per line. These should be directly compatible — `se_commit "$(cd_detect_changes "$repo_dir")"` should work. Confirm the Sprint 0.3 implementation matches this calling convention before coding agents begin.
+4. **`se_commit` argument convention from Sprint 0.3.** **Resolved — confirmed compatible.** Sprint 0.3's `se_commit(file_list)` accepts newline-delimited repo-relative paths. Sprint 0.4's `cd_detect_changes` outputs repo-relative paths, one per line. `se_commit "$(cd_detect_changes "$repo_dir")"` works directly. Coding agents should verify this during implementation.

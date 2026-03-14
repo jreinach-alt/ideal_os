@@ -59,6 +59,7 @@ The sync engine is a prerequisite for enrollment: `enroll_run` needs `se_clone` 
   gba/minish_cap.srm"
   se_stage_files "$file_list"
   ```
+- **Important:** `se_stage_files` must use `git add <path>` (not `git add -u`). Using `-u` would skip untracked files, which breaks Sprint 0.8's conflict handler (`.local` and `.conflict` artifacts are new untracked files that must be staged). Coding agents must verify this during implementation.
 - Git configuration for the repo (user.email, user.name) is set to minimal values during `se_init` if not already set. This prevents git commit from failing on devices with no global git config:
   ```sh
   $CONTINUITY_GIT_BIN -C "$_SE_REPO_DIR" config user.email "continuity@device"
@@ -98,6 +99,7 @@ enroll_run(repo_url, device_name, pat)
        device_name
        sentinel
        last_known_commit
+       clean_shutdown
   9. se_stage_files(".continuity/devices/<device_name>.json")
      se_stage_files(".continuity/.gitignore")
   10. se_commit(".continuity/devices/<device_name>.json\n.continuity/.gitignore")
@@ -109,14 +111,12 @@ enroll_run(repo_url, device_name, pat)
 
 **Pre-clone credential storage note:**
 
-The PAT must be stored before `se_clone` so the credential helper is available to authenticate the clone itself. `enroll_store_credential` writes the PAT to a path that may not exist yet (the repo directory hasn't been cloned). The location used pre-clone is the parent of `CONTINUITY_REPO_DIR`:
+The PAT must be stored before `se_clone` so the credential helper is available to authenticate the clone itself. The enrollment trigger (or `pal_init`) is responsible for ensuring `$(dirname $CONTINUITY_REPO_DIR)` exists before calling `enroll_run`. `enroll_store_credential` writes the PAT to a temporary location under that parent directory:
 
 - Pre-clone: `$(dirname $CONTINUITY_REPO_DIR)/.continuity_credentials_tmp`
 - Post-clone: `$CONTINUITY_REPO_DIR/.continuity/credentials`
 
-After the clone, `enroll_run` moves the tmp file to its final location and re-runs `enroll_configure_git_auth`. This is transparent to callers.
-
-Alternatively: if `$CONTINUITY_REPO_DIR`'s parent directory already exists, write credentials there and configure a temporary credential helper before clone. After clone, write to final location. The implementation may choose either approach — the important invariant is that the credential file is at `$CONTINUITY_REPO_DIR/.continuity/credentials` after `enroll_run` succeeds.
+After the clone, `enroll_run` moves the tmp file to its final location and re-runs `enroll_configure_git_auth`. This is transparent to callers. The important invariant is that the credential file is at `$CONTINUITY_REPO_DIR/.continuity/credentials` after `enroll_run` succeeds.
 
 **`enroll_configure_git_auth` details:**
 
@@ -159,6 +159,7 @@ git_credential_helper.sh
 device_name
 sentinel
 last_known_commit
+clean_shutdown
 ```
 
 These are all local-only device state files. The `.continuity/devices/` directory and `.continuity/config.json` are committed and synced.
@@ -197,13 +198,13 @@ The user copies this file to the SD card root from their PC, inserts the SD card
 
 **Detection path:**
 
-The file is detected at `<SD_CARD_ROOT>/setup.json`. On NextUI, `SD_CARD_ROOT` is `/mnt/SDCARD`. The enrollment trigger looks for `/mnt/SDCARD/setup.json`.
+The file is detected at `$CONTINUITY_SD_ROOT/setup.json`. On NextUI, `CONTINUITY_SD_ROOT` is `/mnt/SDCARD`. The enrollment trigger looks for `$CONTINUITY_SD_ROOT/setup.json`. `CONTINUITY_SD_ROOT` is an optional PAL variable — see `docs/design/pal.md`.
 
 **Functions:**
 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
-| `esd_detect_setup_file` | `()` | 0 found, 1 not found | Check if `<SD_CARD_ROOT>/setup.json` exists. |
+| `esd_detect_setup_file` | `()` | 0 found, 1 not found | Check if `$CONTINUITY_SD_ROOT/setup.json` exists. |
 | `esd_parse_setup_file` | `(setup_file)` | 0 success, 1 parse error | Parse `setup.json`, set module-level variables `_ESD_REPO_URL`, `_ESD_PAT`, `_ESD_DEVICE_NAME`. Validates all three fields are present and non-empty. |
 | `esd_import` | `()` | 0 success, 1 failure | Full SD card import: detect file, parse, call `enroll_run`, delete `setup.json` on success. |
 
@@ -375,39 +376,40 @@ These files exist in the remote before enrollment, so the enrolled device can te
 25. `enroll_run` pushes the device registration commit to the remote.
 26. After `enroll_run`, the device JSON commit is visible in the remote bare repo.
 27. `enroll_write_device_json` produces valid JSON (parseable by `python3 -m json.tool` or equivalent; in BusyBox environments, manual structure check suffices).
-28. `.continuity/.gitignore` lists at minimum: `credentials`, `git_credential_helper.sh`, `device_name`, `sentinel`, `last_known_commit`.
+28. `.continuity/.gitignore` lists at minimum: `credentials`, `git_credential_helper.sh`, `device_name`, `sentinel`, `last_known_commit`, `clean_shutdown`.
 29. `credentials` and `device_name` files are not tracked by git (confirmed via `git ls-files`).
 30. `enroll_run` returns 1 and logs an error if `repo_url` is unreachable — no partial state is left that causes `enroll_is_enrolled` to return 0.
 31. `enroll_configure_git_auth` configures the repo so subsequent `git push` and `git pull` authenticate without interactive prompts.
+32. After `se_clone`, `enroll_run` verifies the default branch is `main` (via `$CONTINUITY_GIT_BIN -C "$CONTINUITY_REPO_DIR" branch --show-current`). If the branch is not `main`, `enroll_run` logs an error (`"Repo default branch is '<branch>', expected 'main'"`) and returns 1. All downstream sync modules hardcode `main` as the branch name.
 
 ### NextUI SD Card Trigger
 
-32. `esd_detect_setup_file` returns 1 when no `setup.json` is present.
-33. `esd_detect_setup_file` returns 0 when `setup.json` is present.
-34. `esd_parse_setup_file` correctly extracts `repo_url`, `pat`, and `device_name` from a well-formed `setup.json`.
-35. `esd_parse_setup_file` returns 1 and logs an error when any required field is missing.
-36. `esd_parse_setup_file` returns 1 and logs an error when any required field is empty.
-37. `esd_import` deletes `setup.json` after a successful enrollment.
-38. `esd_import` does NOT delete `setup.json` if `enroll_run` fails (to allow retry).
-39. `esd_import` returns 0 (no-op, no error) when `setup.json` is absent.
-40. `esd_import` logs a warning and deletes `setup.json` if the device is already enrolled.
-41. `esd_import` returns 1 if `esd_parse_setup_file` fails.
+33. `esd_detect_setup_file` returns 1 when no `setup.json` is present.
+34. `esd_detect_setup_file` returns 0 when `setup.json` is present.
+35. `esd_parse_setup_file` correctly extracts `repo_url`, `pat`, and `device_name` from a well-formed `setup.json`.
+36. `esd_parse_setup_file` returns 1 and logs an error when any required field is missing.
+37. `esd_parse_setup_file` returns 1 and logs an error when any required field is empty.
+38. `esd_import` deletes `setup.json` after a successful enrollment.
+39. `esd_import` does NOT delete `setup.json` if `enroll_run` fails (to allow retry).
+40. `esd_import` returns 0 (no-op, no error) when `setup.json` is absent.
+41. `esd_import` logs a warning and deletes `setup.json` if the device is already enrolled.
+42. `esd_import` returns 1 if `esd_parse_setup_file` fails.
 
 ### Test Enrollment Helper
 
-42. `et_setup` creates a bare git repo at `$ET_REMOTE_DIR` with the three pre-seeded `.srm` files committed.
-43. After `et_setup`, `ET_REPO_DIR` is a valid enrolled clone: contains `.continuity/device_name`, `.continuity/credentials`, `.continuity/devices/test-device.json`.
-44. After `et_setup`, `enroll_is_enrolled` returns 0 when called with the test PAL.
-45. `et_add_remote_save` commits a new `.srm` file to the bare remote, making it available for a subsequent `se_pull`.
-46. `et_teardown` removes all directories under `TEST_TMPDIR`.
+43. `et_setup` creates a bare git repo at `$ET_REMOTE_DIR` with the three pre-seeded `.srm` files committed.
+44. After `et_setup`, `ET_REPO_DIR` is a valid enrolled clone: contains `.continuity/device_name`, `.continuity/credentials`, `.continuity/devices/test-device.json`.
+45. After `et_setup`, `enroll_is_enrolled` returns 0 when called with the test PAL.
+46. `et_add_remote_save` commits a new `.srm` file to the bare remote, making it available for a subsequent `se_pull`.
+47. `et_teardown` removes all directories under `TEST_TMPDIR`.
 
 ### Integration
 
-47. End-to-end: `et_setup` followed by `enroll_is_enrolled` returns 0.
-48. End-to-end: After `et_setup`, a `se_pull` produces no error (repo is already up to date).
-49. End-to-end: After `et_add_remote_save` adds a new save, `se_pull` returns 0 and the new save appears in the working tree.
-50. All tests pass under `busybox ash`.
-51. `shellcheck` reports no errors on all `.sh` files created in this sprint.
+48. End-to-end: `et_setup` followed by `enroll_is_enrolled` returns 0.
+49. End-to-end: After `et_setup`, a `se_pull` produces no error (repo is already up to date).
+50. End-to-end: After `et_add_remote_save` adds a new save, `se_pull` returns 0 and the new save appears in the working tree.
+51. All tests pass under `busybox ash`.
+52. `shellcheck` reports no errors on all `.sh` files created in this sprint.
 
 ---
 
@@ -487,10 +489,12 @@ All unit tests are self-contained: they create temp directories, do all work ins
 
 ---
 
-## Open Questions
+## Resolved Questions
 
-1. **SD card root path abstraction:** `enroll_sd_card.sh` currently hard-codes `/mnt/SDCARD` as the SD card root. Should this be a PAL variable (e.g. `CONTINUITY_SD_ROOT`) so the test can point it at a temp dir without platform-specific overrides? Recommendation: yes — add `CONTINUITY_SD_ROOT` to the NextUI PAL and test PAL in this sprint to make `enroll_sd_card.sh` testable. This avoids any hard-coded paths in platform code and aligns with the PAL pattern. If the orchestrator approves, implementation should add `CONTINUITY_SD_ROOT` to `pal.md`'s optional variables table.
+1. **SD card root path abstraction:** **Resolved — yes.** `CONTINUITY_SD_ROOT` is an optional PAL variable. Set to `/mnt/SDCARD` in NextUI PAL, `$TEST_TMPDIR/sdcard` in test PAL. Added to `docs/design/pal.md` optional variables table. `enroll_sd_card.sh` uses `$CONTINUITY_SD_ROOT` instead of hardcoding `/mnt/SDCARD`.
 
-2. **`se_push` retry sleep on constrained devices:** The exponential backoff calls `sleep 2`, `sleep 4`, etc. On BusyBox, `sleep` accepts integer seconds only — no fractional values. This is fine for the current backoff schedule. Confirm: are the specified delays (2s, 4s, 8s, 16s) acceptable for enrolled devices, or should the max retry delay be capped lower?
+2. **`se_push` retry sleep on constrained devices:** **Resolved — approved as-is.** 2s/4s/8s/16s delays are acceptable. Total worst-case 30s, runs in background on handhelds. BusyBox `sleep` takes integers, which these are.
 
-3. **Pre-clone credential storage path:** The spec describes a two-phase credential write (temp path before clone, final path after). This adds complexity. An alternative: require that `$CONTINUITY_REPO_DIR`'s parent directory always exists before `enroll_run` is called (the PAL's `pal_init` creates it, or the enrollment trigger creates it). If the orchestrator prefers this invariant, the pre-clone temp path logic can be dropped and credentials can be written directly to a location under the parent. Clarification preferred before implementation begins.
+3. **Pre-clone credential storage path:** **Resolved — require parent dir to exist.** The enrollment trigger (or `pal_init`) must ensure `$(dirname $CONTINUITY_REPO_DIR)` exists before calling `enroll_run`. Credentials are written to `$(dirname $CONTINUITY_REPO_DIR)/.continuity_credentials_tmp` before clone, moved to final location after clone. Single approach, no alternatives.
+
+4. **Branch name validation:** **Resolved — hardcode `main`, validate during enrollment.** `enroll_run` verifies the cloned repo's default branch is `main` after `se_clone`. If not `main`, enrollment fails with a clear error. All downstream sync modules use `main` as the branch name. Configurable branch names deferred to a future sprint.

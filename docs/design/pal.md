@@ -75,6 +75,12 @@ Every PAL implementation must set these variables before `pal_init()` returns:
 | `pal_log` | `(level, message)` | void | Log a message at the given level (`debug`, `info`, `warn`, `error`). Platform chooses destination (stderr, file, journald, logcat). |
 | `pal_get_platform_map` | `()` | prints path to stdout | Return the absolute path to this platform's map JSON file (from `config/platform_maps/`). |
 
+### Optional Variables
+
+| Variable | Type | Description | Example (NextUI) |
+|----------|------|-------------|------------------|
+| `CONTINUITY_SD_ROOT` | path | Root of the SD card or external storage. Used by SD card enrollment triggers to locate `setup.json`. Not required on platforms without SD card enrollment (e.g. RetroDeck CLI enrollment). Not checked by `pal_validate`. | `/mnt/SDCARD` |
+
 ### Optional Functions
 
 | Function | Signature | Returns | Description |
@@ -98,6 +104,7 @@ CONTINUITY_SAVES_ROOT="/mnt/SDCARD/Saves"
 CONTINUITY_REPO_DIR="/mnt/SDCARD/.continuity/repo"
 CONTINUITY_PLATFORM="nextui"
 CONTINUITY_GIT_BIN="/mnt/SDCARD/Tools/Continuity.pak/bin/git"
+CONTINUITY_SD_ROOT="/mnt/SDCARD"
 # CONTINUITY_DEVICE_NAME read from enrollment config
 
 pal_init() {
@@ -171,6 +178,7 @@ CONTINUITY_REPO_DIR="$TEST_TMPDIR/repo"
 CONTINUITY_DEVICE_NAME="test-device"
 CONTINUITY_PLATFORM="nextui"  # Use NextUI map by default for tests
 CONTINUITY_GIT_BIN="git"
+CONTINUITY_SD_ROOT="$TEST_TMPDIR/sdcard"
 
 pal_init() {
     mkdir -p "$CONTINUITY_SAVES_ROOT" "$CONTINUITY_REPO_DIR"

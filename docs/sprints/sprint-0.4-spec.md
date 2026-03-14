@@ -361,16 +361,12 @@ Assertions:
 
 ---
 
-## Open Questions
+## Resolved Questions
 
-1. **Offline cold start — should sentinel be created?**
-   If `pal_is_online` returns 1 at startup, `se_pull` skips and `se_push` defers (returns 2 per sync engine convention). The cold start completes locally. Should we create the sentinel and store the local HEAD commit hash?
-   - **Option A (conservative):** Do not create sentinel. On next boot, cold start runs again. Guarantees the next full cold start sees the real remote state.
-   - **Option B (permissive):** Create sentinel and store local HEAD. On next boot, boot pull (Sprint 0.5) runs. If the repo diverges (offline device had local commits and remote also advanced), boot pull must handle the reconciliation.
-   - **Recommendation:** Option A. Cold start is cheap; it's safer to re-run it than risk boot pull encountering a diverged repo state it isn't designed to handle. Needs approval before implementation.
+1. **Offline cold start — should sentinel be created?** **Resolved — Option A (no sentinel when offline).** If `pal_is_online` returns 1 at startup, `se_pull` skips and `se_push` defers. The cold start completes locally but does NOT create the sentinel and does NOT store the commit hash. On next boot, cold start runs again from scratch. Rationale: cold start is cheap and idempotent; re-running it with connectivity gives a proper bidirectional merge against the real remote state, avoiding the complex interactions between boot pull, stale boot, and conflict handler for a first-boot edge case.
 
-2. **What happens if `se_push` defers (offline) mid-cold-start after a commit has already been made?**
-   The commit is local but not pushed. If sentinel is created (Option B above), on next boot, boot pull will run and pull remote changes — but the local commit is not on the remote yet. Boot pull must push the pending commit before or after pulling. This is a boot pull (Sprint 0.5) concern but the cold start spec should define whether to create the sentinel in this case. Linked to Open Question 1.
+   **Implementation impact on `cs_run` flow:** Steps 8 and 9 (store commit hash and create sentinel) are skipped if `se_push` returned 2 (offline). The check is: if `se_push` deferred AND the system was offline at the start of `cs_run`, do not create sentinel. If `se_push` succeeded (or there was nothing to push), create the sentinel normally.
 
-3. **`cd_detect_changes` — should it filter staged vs. unstaged separately?**
-   `git status --porcelain` reports both staged (index) and unstaged (working tree) changes. For cold start, all changes are unstaged until `se_stage_files` is called. The current spec collects all changed `.srm` files regardless of staged/unstaged distinction. This is correct for the cold start "is there anything to commit?" check after staging. Confirm this is sufficient for Sprint 0.6 (runtime poll) as well, or whether `cd_detect_changes` needs a parameter to distinguish staged-only.
+2. **What happens if `se_push` defers (offline) mid-cold-start?** **Resolved — linked to OQ1.** Since sentinel is NOT created when offline, this scenario is safe. The local commit exists but isn't pushed. On next boot, cold start re-runs, `se_pull` gets the remote state, and the merge includes both the previously-committed local changes and any new remote changes.
+
+3. **`cd_detect_changes` — staged vs. unstaged filtering.** **Resolved — all changes, no filtering parameter needed.** Both Sprint 0.4 (cold start) and Sprint 0.6 (runtime poll) want the same thing: "which `.srm` files have changed in the working tree?" Neither needs a staged-vs-unstaged distinction. `git status --porcelain` returns both, and callers always stage everything returned. No parameter needed.
