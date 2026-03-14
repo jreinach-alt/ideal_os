@@ -181,7 +181,7 @@ CONTINUITY_GIT_BIN="git"
 CONTINUITY_SD_ROOT="$TEST_TMPDIR/sdcard"
 
 pal_init() {
-    mkdir -p "$CONTINUITY_SAVES_ROOT" "$CONTINUITY_REPO_DIR"
+    mkdir -p "$CONTINUITY_SAVES_ROOT" "$(dirname "$CONTINUITY_REPO_DIR")"
     return 0
 }
 

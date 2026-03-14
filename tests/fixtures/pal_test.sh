@@ -15,7 +15,7 @@ CONTINUITY_SD_ROOT="$TEST_TMPDIR/sdcard"
 # pal_init — create save and repo directories
 # Always returns 0. No hardware dependencies.
 pal_init() {
-    mkdir -p "$CONTINUITY_SAVES_ROOT" "$CONTINUITY_REPO_DIR"
+    mkdir -p "$CONTINUITY_SAVES_ROOT" "$(dirname "$CONTINUITY_REPO_DIR")"
     return 0
 }
 
