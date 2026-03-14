@@ -61,11 +61,11 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.3 — Enrollment
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Implement core enrollment logic (`src/core/enrollment.sh`) — clone repo, register device, store credentials, write device name
-- Implement NextUI enrollment trigger (`src/platforms/nextui/enroll_sd_card.sh`) — detect and import `.continuity/setup.json` from SD card
+- Implement NextUI enrollment trigger (`src/platforms/nextui/enroll_sd_card.sh`) — detect and import `setup.json` from SD card
 - Implement test enrollment helper (`tests/fixtures/enroll_test.sh`) — scripted setup for CI (no SD card, no user interaction)
 - Implement sync engine (`src/core/sync_engine.sh`) — git clone, add, commit, push, pull (needed by enrollment for initial clone and device registration push)
 - Device registration in `.continuity/devices/<name>.json` (committed to repo)
@@ -77,7 +77,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 - Test enrollment: scripted setup creates cloned repo with device registered
 - Device name persisted and readable by PAL on next boot
 - Credential stored at platform-appropriate location
-- All tests pass under `busybox ash`
+- All tests pass under `busybox ash` (104 new tests)
 
 **Dependencies:** Sprint 0.2 (PAL, path mapper)
 

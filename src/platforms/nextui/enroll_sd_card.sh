@@ -1,0 +1,81 @@
+#!/bin/sh
+# shellcheck shell=ash  # BusyBox ash target — local is supported
+# shellcheck disable=SC3043
+# NextUI SD Card Enrollment Trigger — detect, parse, and import setup.json
+# Requires the PAL, sync_engine, and enrollment to be loaded before sourcing.
+
+# Module-level variables (set by esd_parse_setup_file)
+_ESD_REPO_URL=""
+_ESD_PAT=""
+_ESD_DEVICE_NAME=""
+
+# esd_detect_setup_file — check if setup.json exists on SD card
+# Returns: 0 found, 1 not found
+esd_detect_setup_file() {
+    [ -f "$CONTINUITY_SD_ROOT/setup.json" ]
+}
+
+# esd_parse_setup_file — parse setup.json and set module variables
+# Usage: esd_parse_setup_file <setup_file>
+# Returns: 0 success, 1 parse error
+esd_parse_setup_file() {
+    local setup_file
+    setup_file="$1"
+
+    _ESD_REPO_URL=$(sed -n 's/^[[:space:]]*"repo_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
+    _ESD_PAT=$(sed -n 's/^[[:space:]]*"pat"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
+    _ESD_DEVICE_NAME=$(sed -n 's/^[[:space:]]*"device_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
+
+    if [ -z "$_ESD_REPO_URL" ]; then
+        pal_log "error" "setup.json: missing or empty repo_url"
+        return 1
+    fi
+    if [ -z "$_ESD_PAT" ]; then
+        pal_log "error" "setup.json: missing or empty pat"
+        return 1
+    fi
+    if [ -z "$_ESD_DEVICE_NAME" ]; then
+        pal_log "error" "setup.json: missing or empty device_name"
+        return 1
+    fi
+
+    return 0
+}
+
+# esd_import — full SD card enrollment import
+# Returns: 0 success (or no-op), 1 failure
+esd_import() {
+    # Step 1: Detect setup file
+    if ! esd_detect_setup_file; then
+        return 0
+    fi
+
+    local setup_file
+    setup_file="$CONTINUITY_SD_ROOT/setup.json"
+
+    # Step 2: Parse setup file
+    if ! esd_parse_setup_file "$setup_file"; then
+        pal_log "error" "Failed to parse setup.json"
+        return 1
+    fi
+
+    # Step 3: Check if already enrolled
+    if enroll_is_enrolled; then
+        pal_log "warn" "already enrolled, skipping setup.json"
+        rm -f "$setup_file"
+        return 0
+    fi
+
+    # Step 4: Run enrollment
+    if ! enroll_run "$_ESD_REPO_URL" "$_ESD_DEVICE_NAME" "$_ESD_PAT"; then
+        pal_log "error" "SD card enrollment failed"
+        return 1
+    fi
+
+    # Step 5: Delete setup.json (PAT must not persist)
+    rm -f "$setup_file"
+
+    # Step 6: Log success
+    pal_log "info" "SD card enrollment complete: $_ESD_DEVICE_NAME"
+    return 0
+}
