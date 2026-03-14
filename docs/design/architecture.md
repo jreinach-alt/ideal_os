@@ -2,6 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-03-12
+**Last updated:** 2026-03-14 (Sprint 0.4 complete)
 
 ## Overview
 
@@ -62,21 +63,19 @@ Continuity is a cross-platform SRAM save sync tool for retro gaming devices. It 
 
 #### 1. Change Detector (`src/core/change_detector.sh`)
 
-Detects when `.srm` files are written or modified.
+Detects when `.srm` files are written or modified. Provides three functions:
 
-**Constrained devices (BusyBox ash):** Polling via `find -newer`
-```sh
-# Check for files modified since last check
-find "$saves_dir" -name "*.srm" -newer "$marker_file"
-touch "$marker_file"
-```
+- **`cd_detect_changes(repo_dir)`** — Returns repo-relative paths of `.srm` files with uncommitted changes (new, modified, or deleted). Uses `git status --porcelain -uall`, filtered to `\.srm$`. Returns 0 always; empty output means no changes.
+- **`cd_list_repo_saves(repo_dir)`** — Lists all `.srm` files currently tracked in the repo (excludes `.git/` and `.continuity/`). Used by cold start to enumerate existing saves.
+- **`cd_list_device_saves()`** — Lists all `.srm` files on the device by iterating `pm_list_watched_dirs()`. Used by stale boot recovery to enumerate saves that may need syncing.
 
-**Full Linux (RetroDeck):** `inotifywait` event-driven
-```sh
-inotifywait -m -r -e close_write --include '\.srm$' "$saves_dir"
-```
+All three functions output one repo-relative path per line and always return 0.
 
-**Android:** `FileObserver` API (Java)
+**Runtime change detection strategies** (used by the daemon poll loop, not by `cd_detect_changes`):
+
+- **Constrained devices (BusyBox ash):** `find -newer` against the sentinel file
+- **Full Linux (RetroDeck):** `inotifywait` event-driven
+- **Android:** `FileObserver` API (Java)
 
 Default poll interval: 30 seconds (configurable).
 
@@ -111,7 +110,27 @@ device: my-brick
 timestamp: 2026-03-12T14:30:00Z
 ```
 
-#### 4. Conflict Handler (`src/core/conflict_handler.sh`)
+#### 4. Cold Start (`src/core/cold_start.sh`)
+
+Handles first-time sync when a device has never synced before (no sentinel file exists). Provides four functions:
+
+- **`cs_is_cold_start(repo_dir)`** — Returns 0 if `$repo_dir/.continuity/sentinel` does not exist (cold start needed), 1 if it does (not a cold start).
+- **`cs_store_commit(repo_dir, commit_hash)`** — Writes the 40-char SHA-1 to `$repo_dir/.continuity/last_known_commit`. Used after every successful sync to track the baseline for future diffs.
+- **`cs_read_commit(repo_dir)`** — Reads the stored commit hash, stripping whitespace. Returns empty string if no file exists.
+- **`cs_create_sentinel(repo_dir)`** — Creates `$repo_dir/.continuity/sentinel` with an ISO-8601 timestamp. The sentinel's mtime is used by the runtime poll (`find -newer`) as the baseline for detecting changes.
+
+**`cs_run` flow:**
+1. If repo has existing saves and device also has saves for the same game, a conflict exists — preserve both (local copy renamed to `<path>.<device_name>.local`)
+2. Copy all repo saves to device (via path mapper)
+3. Copy all device-only saves to repo (via path mapper)
+4. If online: commit, push, store commit hash, create sentinel
+5. If offline: commit locally, defer push (no sentinel or commit hash stored — cold start will re-run on next boot)
+
+Conflict notification uses the optional PAL hook `pal_on_conflict()` if the platform defines it.
+
+#### 5. Conflict Handler *(Sprint 0.8 — not yet implemented)*
+
+`src/core/conflict_handler.sh` will handle runtime merge conflicts (when `git pull` detects diverged `.srm` files). Planned behavior:
 
 When `git pull` detects a merge conflict on an `.srm` file:
 
@@ -136,7 +155,7 @@ When `git pull` detects a merge conflict on an `.srm` file:
 
 Resolution: User picks one (or the platform client auto-resolves by "keep newest" if configured). The `.local` and `.conflict` files are removed after resolution.
 
-#### 5. Connectivity Checking
+#### 6. Connectivity Checking
 
 Network connectivity is checked via the PAL function `pal_is_online()`. Each platform implements this according to its capabilities:
 
@@ -149,7 +168,7 @@ If offline:
 - Push attempts resume when connectivity returns
 - Pull happens on next boot or next connectivity event
 
-#### 6. Enrollment (`src/core/enrollment.sh`)
+#### 7. Enrollment (`src/core/enrollment.sh`)
 
 Device setup and credential management. Two paths:
 
@@ -189,6 +208,8 @@ my-saves/
 │   └── ff7.srm
 └── .continuity/
     ├── config.json
+    ├── sentinel              ← created after first successful sync (mtime = poll baseline)
+    ├── last_known_commit     ← 40-char SHA-1 of last synced commit (diff baseline)
     └── devices/
         ├── my-brick.json
         ├── my-rp5.json
@@ -272,12 +293,15 @@ The daemon runs as a background shell process, launched at boot.
 ```
 Boot
   ├── auto.sh spawns continuity_daemon.sh &
-  ├── Daemon: git pull (sync latest saves)
-  ├── Daemon: enter poll loop (find -newer, every 30s)
+  ├── Daemon: boot sync phase
+  │     ├── No sentinel?        → Cold Start (cs_run)     [Sprint 0.4]
+  │     ├── No clean_shutdown?  → Stale Boot (sb_run)     [Sprint 0.7]
+  │     └── Normal boot         → Boot Pull (bp_run)      [Sprint 0.5]
+  ├── Daemon: enter poll loop (find -newer sentinel, every 30s)  [Sprint 0.6]
   │     ├── On change: stage, commit
-  │     ├── If WiFi: push
+  │     ├── If WiFi: push, update last_known_commit
   │     └── If no WiFi: queue (commits are local)
-  └── Daemon: on SIGTERM (shutdown) → final push attempt
+  └── Daemon: on SIGTERM (shutdown) → final push attempt, write clean_shutdown marker
 ```
 
 **PID tracking:** Daemon writes PID to `/tmp/continuity.pid`. Prevents duplicate instances.
