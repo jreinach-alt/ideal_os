@@ -1,6 +1,6 @@
 # Sprint 0.6 — Runtime Poll
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.5 (boot pull — complete; sentinel exists at `$repo_dir/.continuity/sentinel`, `last_known_commit` exists, repo is in steady-state post-boot)
 
