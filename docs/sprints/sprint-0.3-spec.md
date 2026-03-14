@@ -32,7 +32,7 @@ The sync engine is a prerequisite for enrollment: `enroll_run` needs `se_clone` 
 | `se_clone` | `(repo_url, target_dir)` | 0 success, 1 failure | `git clone <repo_url> <target_dir>`. Used only during enrollment. Runs `$CONTINUITY_GIT_BIN clone`. |
 | `se_pull` | `(repo_dir)` | 0 success, 1 diverged, 2 network error | `git -C "$repo_dir" pull --ff-only origin main`. Returns 1 if fast-forward is not possible (diverged history), 2 on network failure. |
 | `se_stage_files` | `(repo_dir, file_list)` | 0 success, 1 failure | `git -C "$repo_dir" add` each path in the newline-delimited `file_list`. Paths are relative to the repo working tree. |
-| `se_commit` | `(repo_dir, file_list)` | 0 success, 1 failure | Commit staged files with auto-generated message. Subject line: `<system>/<filename> updated` (1 file) or `N saves updated` (multiple). Trailer lines: `device: <name>` and `timestamp: <ISO 8601>`. Uses `_SE_DEVICE_NAME` set by `se_init`. An optional third argument overrides the auto-generated subject line (used by enrollment for `"enroll: register <device_name>"`). |
+| `se_commit` | `(repo_dir, file_list, [subject_override])` | 0 success, 1 failure | Commit staged files with auto-generated message. Subject line: `<system>/<filename> updated` (1 file) or `N saves updated` (multiple). Trailer lines: `device: <name>` and `timestamp: <ISO 8601>`. Uses `_SE_DEVICE_NAME` set by `se_init`. The optional `subject_override` argument replaces the auto-generated subject line (used by enrollment for `"enroll: register <device_name>"`). |
 | `se_push` | `(repo_dir)` | 0 success, 1 persistent failure, 2 offline/deferred | `git -C "$repo_dir" push origin main`. Retries on network error with exponential backoff (2s, 4s, 8s, 16s). Returns 1 after all retries exhausted. Returns 2 if `pal_is_online` returns 1 at time of call (caller asked to push but device is offline — commit is queued locally). |
 | `se_has_staged_changes` | `(repo_dir)` | 0 staged changes exist, 1 index clean | Check `git -C "$repo_dir" diff --cached --quiet`. |
 | `se_has_unpushed_commits` | `(repo_dir)` | 0 local is ahead, 1 up to date | Check `git -C "$repo_dir" log @{u}..HEAD`. |
@@ -237,12 +237,12 @@ esd_import()
 **JSON parsing (BusyBox ash, no jq):**
 
 ```sh
-_ESD_REPO_URL=$(grep '"repo_url"' "$setup_file" | sed 's/.*"repo_url" *: *"\([^"]*\)".*/\1/')
-_ESD_PAT=$(grep '"pat"' "$setup_file" | sed 's/.*"pat" *: *"\([^"]*\)".*/\1/')
-_ESD_DEVICE_NAME=$(grep '"device_name"' "$setup_file" | sed 's/.*"device_name" *: *"\([^"]*\)".*/\1/')
+_ESD_REPO_URL=$(sed -n 's/^[[:space:]]*"repo_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
+_ESD_PAT=$(sed -n 's/^[[:space:]]*"pat"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
+_ESD_DEVICE_NAME=$(sed -n 's/^[[:space:]]*"device_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$setup_file")
 ```
 
-The `setup.json` format is controlled by us. This parse strategy is sufficient for well-formed input. Malformed JSON (e.g. missing closing quote) will produce an empty variable, which is caught by the non-empty validation in `esd_parse_setup_file`.
+Each `sed` pattern anchors the key match to the start of the line (after optional whitespace), preventing false matches against key substrings appearing in values. The `setup.json` format is controlled by us. This parse strategy is sufficient for well-formed input. Malformed JSON (e.g. missing closing quote) will produce an empty variable, which is caught by the non-empty validation in `esd_parse_setup_file`.
 
 **Security:**
 
@@ -368,59 +368,59 @@ These files exist in the remote before enrollment, so the enrolled device can te
 10. `se_push` returns 1 after all retries are exhausted without success.
 11. `se_push` returns 2 when `pal_is_online` returns 1 (device is offline at time of push attempt).
 12. `se_pull` returns 0 on a clean fast-forward pull.
-12. `se_pull` returns 1 when the remote has diverged and fast-forward is not possible.
-13. `se_pull` returns 2 when the network is unreachable (simulated via an invalid remote URL).
-14. `se_has_unpushed_commits` returns 0 after a commit that has not been pushed; returns 1 after a successful push.
-15. `se_get_head_commit` returns the correct 40-character SHA after a commit.
-16. All git commands use `$CONTINUITY_GIT_BIN` — no hard-coded `git` invocations in `sync_engine.sh`.
+13. `se_pull` returns 1 when the remote has diverged and fast-forward is not possible.
+14. `se_pull` returns 2 when the network is unreachable (simulated via an invalid remote URL).
+15. `se_has_unpushed_commits` returns 0 after a commit that has not been pushed; returns 1 after a successful push.
+16. `se_get_head_commit` returns the correct 40-character SHA after a commit.
+17. All git commands use `$CONTINUITY_GIT_BIN` — no hard-coded `git` invocations in `sync_engine.sh`.
 
 ### Core Enrollment
 
-17. `enroll_is_enrolled` returns 1 when `$CONTINUITY_REPO_DIR` does not exist.
-18. `enroll_is_enrolled` returns 1 when the repo directory exists but `.continuity/device_name` is missing.
-19. `enroll_is_enrolled` returns 0 after a successful `enroll_run`.
-20. `enroll_run` clones the repo to `$CONTINUITY_REPO_DIR`.
-21. `enroll_run` writes the PAT to `$CONTINUITY_REPO_DIR/.continuity/credentials`.
-22. `enroll_run` writes `.continuity/device_name` with the device name string.
-23. `enroll_run` writes a valid `.continuity/devices/<device_name>.json` with all required fields (`_schema_version`, `device_name`, `platform`, `enrolled_at`, `last_sync`, `last_push`).
-24. `enroll_run` commits `.continuity/devices/<device_name>.json` and `.continuity/.gitignore` to the repo.
-25. `enroll_run` pushes the device registration commit to the remote.
-26. After `enroll_run`, the device JSON commit is visible in the remote bare repo.
-27. `enroll_write_device_json` produces valid JSON (parseable by `python3 -m json.tool` or equivalent; in BusyBox environments, manual structure check suffices).
-28. `.continuity/.gitignore` lists at minimum: `credentials`, `git_credential_helper.sh`, `device_name`, `sentinel`, `last_known_commit`, `clean_shutdown`.
-29. `credentials` and `device_name` files are not tracked by git (confirmed via `git ls-files`).
-30. `enroll_run` returns 1 and logs an error if `repo_url` is unreachable — no partial state is left that causes `enroll_is_enrolled` to return 0.
-31. `enroll_configure_git_auth` configures the repo so subsequent `git push` and `git pull` authenticate without interactive prompts.
-32. After `se_clone`, `enroll_run` verifies the default branch is `main` (via `$CONTINUITY_GIT_BIN -C "$CONTINUITY_REPO_DIR" branch --show-current`). If the branch is not `main`, `enroll_run` logs an error (`"Repo default branch is '<branch>', expected 'main'"`) and returns 1. All downstream sync modules hardcode `main` as the branch name.
+18. `enroll_is_enrolled` returns 1 when `$CONTINUITY_REPO_DIR` does not exist.
+19. `enroll_is_enrolled` returns 1 when the repo directory exists but `.continuity/device_name` is missing.
+20. `enroll_is_enrolled` returns 0 after a successful `enroll_run`.
+21. `enroll_run` clones the repo to `$CONTINUITY_REPO_DIR`.
+22. `enroll_run` writes the PAT to `$CONTINUITY_REPO_DIR/.continuity/credentials`.
+23. `enroll_run` writes `.continuity/device_name` with the device name string.
+24. `enroll_run` writes a valid `.continuity/devices/<device_name>.json` with all required fields (`_schema_version`, `device_name`, `platform`, `enrolled_at`, `last_sync`, `last_push`).
+25. `enroll_run` commits `.continuity/devices/<device_name>.json` and `.continuity/.gitignore` to the repo.
+26. `enroll_run` pushes the device registration commit to the remote.
+27. After `enroll_run`, the device JSON commit is visible in the remote bare repo.
+28. `enroll_write_device_json` produces valid JSON (parseable by `python3 -m json.tool` or equivalent; in BusyBox environments, manual structure check suffices).
+29. `.continuity/.gitignore` lists at minimum: `credentials`, `git_credential_helper.sh`, `device_name`, `sentinel`, `last_known_commit`, `clean_shutdown`.
+30. `credentials` and `device_name` files are not tracked by git (confirmed via `git ls-files`).
+31. `enroll_run` returns 1 and logs an error if `repo_url` is unreachable — no partial state is left that causes `enroll_is_enrolled` to return 0.
+32. `enroll_configure_git_auth` configures the repo so subsequent `git push` and `git pull` authenticate without interactive prompts.
+33. After `se_clone`, `enroll_run` verifies the default branch is `main` (via `$CONTINUITY_GIT_BIN -C "$CONTINUITY_REPO_DIR" branch --show-current`). If the branch is not `main`, `enroll_run` logs an error (`"Repo default branch is '<branch>', expected 'main'"`) and returns 1. All downstream sync modules hardcode `main` as the branch name.
 
 ### NextUI SD Card Trigger
 
-33. `esd_detect_setup_file` returns 1 when no `setup.json` is present.
-34. `esd_detect_setup_file` returns 0 when `setup.json` is present.
-35. `esd_parse_setup_file` correctly extracts `repo_url`, `pat`, and `device_name` from a well-formed `setup.json`.
-36. `esd_parse_setup_file` returns 1 and logs an error when any required field is missing.
-37. `esd_parse_setup_file` returns 1 and logs an error when any required field is empty.
-38. `esd_import` deletes `setup.json` after a successful enrollment.
-39. `esd_import` does NOT delete `setup.json` if `enroll_run` fails (to allow retry).
-40. `esd_import` returns 0 (no-op, no error) when `setup.json` is absent.
-41. `esd_import` logs a warning and deletes `setup.json` if the device is already enrolled.
-42. `esd_import` returns 1 if `esd_parse_setup_file` fails.
+34. `esd_detect_setup_file` returns 1 when no `setup.json` is present.
+35. `esd_detect_setup_file` returns 0 when `setup.json` is present.
+36. `esd_parse_setup_file` correctly extracts `repo_url`, `pat`, and `device_name` from a well-formed `setup.json`.
+37. `esd_parse_setup_file` returns 1 and logs an error when any required field is missing.
+38. `esd_parse_setup_file` returns 1 and logs an error when any required field is empty.
+39. `esd_import` deletes `setup.json` after a successful enrollment.
+40. `esd_import` does NOT delete `setup.json` if `enroll_run` fails (to allow retry).
+41. `esd_import` returns 0 (no-op, no error) when `setup.json` is absent.
+42. `esd_import` logs a warning and deletes `setup.json` if the device is already enrolled.
+43. `esd_import` returns 1 if `esd_parse_setup_file` fails.
 
 ### Test Enrollment Helper
 
-43. `et_setup` creates a bare git repo at `$ET_REMOTE_DIR` with the three pre-seeded `.srm` files committed.
-44. After `et_setup`, `ET_REPO_DIR` is a valid enrolled clone: contains `.continuity/device_name`, `.continuity/credentials`, `.continuity/devices/test-device.json`.
-45. After `et_setup`, `enroll_is_enrolled` returns 0 when called with the test PAL.
-46. `et_add_remote_save` commits a new `.srm` file to the bare remote, making it available for a subsequent `se_pull`.
-47. `et_teardown` removes all directories under `TEST_TMPDIR`.
+44. `et_setup` creates a bare git repo at `$ET_REMOTE_DIR` with the three pre-seeded `.srm` files committed.
+45. After `et_setup`, `ET_REPO_DIR` is a valid enrolled clone: contains `.continuity/device_name`, `.continuity/credentials`, `.continuity/devices/test-device.json`.
+46. After `et_setup`, `enroll_is_enrolled` returns 0 when called with the test PAL.
+47. `et_add_remote_save` commits a new `.srm` file to the bare remote, making it available for a subsequent `se_pull`.
+48. `et_teardown` removes all directories under `TEST_TMPDIR`.
 
 ### Integration
 
-48. End-to-end: `et_setup` followed by `enroll_is_enrolled` returns 0.
-49. End-to-end: After `et_setup`, a `se_pull` produces no error (repo is already up to date).
-50. End-to-end: After `et_add_remote_save` adds a new save, `se_pull` returns 0 and the new save appears in the working tree.
-51. All tests pass under `busybox ash`.
-52. `shellcheck` reports no errors on all `.sh` files created in this sprint.
+49. End-to-end: `et_setup` followed by `enroll_is_enrolled` returns 0.
+50. End-to-end: After `et_setup`, a `se_pull` produces no error (repo is already up to date).
+51. End-to-end: After `et_add_remote_save` adds a new save, `se_pull` returns 0 and the new save appears in the working tree.
+52. All tests pass under `busybox ash`.
+53. `shellcheck` reports no errors on all `.sh` files created in this sprint.
 
 ---
 

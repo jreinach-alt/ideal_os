@@ -35,7 +35,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.2 — Platform Abstraction Layer and Path Mapper
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Define the PAL interface (`src/core/pal.sh`) — required variables, required functions, validator
