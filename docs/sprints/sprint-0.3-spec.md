@@ -1,6 +1,6 @@
 # Sprint 0.3 — Enrollment
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.2 (PAL framework, path mapper)
 
