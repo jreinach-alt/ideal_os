@@ -111,7 +111,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.5 — Boot Pull
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Implement boot pull sync (`src/core/boot_pull.sh`) — normal boot with existing sentinel and stored commit
