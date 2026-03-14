@@ -83,19 +83,22 @@ cs_run() {
     local device_saves
     device_saves=$(cd_list_device_saves)
 
-    # Temp file for conflict artifact paths (subshell-safe accumulation)
-    local conflict_tmp
+    # Temp files for subshell-safe accumulation
+    local conflict_tmp cp_fail_tmp
     conflict_tmp=$(mktemp)
+    cp_fail_tmp=$(mktemp)
     printf '' > "$conflict_tmp"
+    printf '' > "$cp_fail_tmp"
 
     # Step 4: For each repo save, sync to device
     if [ -n "$repo_saves" ]; then
         printf '%s\n' "$repo_saves" | while IFS= read -r repo_path; do
             [ -z "$repo_path" ] && continue
 
-            local local_path
-            local_path=$(pm_repo_to_local "$repo_path" 2>/dev/null)
-            if [ $? -ne 0 ] || [ -z "$local_path" ]; then
+            local local_path rc_map
+            rc_map=0
+            local_path=$(pm_repo_to_local "$repo_path" 2>/dev/null) || rc_map=$?
+            if [ "$rc_map" -ne 0 ] || [ -z "$local_path" ]; then
                 pal_log "warn" "Cold start: unknown system in repo path: $repo_path"
                 continue
             fi
@@ -106,14 +109,26 @@ cs_run() {
             if [ ! -f "$local_path" ]; then
                 # Repo-only: copy to device
                 mkdir -p "$(dirname "$local_path")"
-                cp "$repo_file" "$local_path"
+                if ! cp "$repo_file" "$local_path"; then
+                    pal_log "error" "Cold start: failed to copy $repo_path to device"
+                    printf 'fail\n' > "$cp_fail_tmp"
+                    break
+                fi
                 pal_log "info" "Cold start: pulled $repo_path to device"
             elif ! cmp -s "$repo_file" "$local_path"; then
                 # Conflict: repo wins, preserve device version
                 local conflict_name
                 conflict_name="$repo_path.$CONTINUITY_DEVICE_NAME.local"
-                cp "$local_path" "$repo_dir/$conflict_name"
-                cp "$repo_file" "$local_path"
+                if ! cp "$local_path" "$repo_dir/$conflict_name"; then
+                    pal_log "error" "Cold start: failed to preserve device version of $repo_path"
+                    printf 'fail\n' > "$cp_fail_tmp"
+                    break
+                fi
+                if ! cp "$repo_file" "$local_path"; then
+                    pal_log "error" "Cold start: failed to copy $repo_path to device"
+                    printf 'fail\n' > "$cp_fail_tmp"
+                    break
+                fi
 
                 # Write .conflict metadata
                 local timestamp
@@ -135,14 +150,24 @@ cs_run() {
         done
     fi
 
+    # Check for copy failures in step 4
+    local step4_failure
+    step4_failure=$(cat "$cp_fail_tmp")
+    if [ -n "$step4_failure" ]; then
+        rm -f "$conflict_tmp" "$cp_fail_tmp"
+        return 1
+    fi
+
     # Step 5: For each device save, sync to repo
+    printf '' > "$cp_fail_tmp"
     if [ -n "$device_saves" ]; then
         printf '%s\n' "$device_saves" | while IFS= read -r local_path; do
             [ -z "$local_path" ] && continue
 
-            local repo_path
-            repo_path=$(pm_local_to_repo "$local_path" 2>/dev/null)
-            if [ $? -ne 0 ] || [ -z "$repo_path" ]; then
+            local repo_path rc_map
+            rc_map=0
+            repo_path=$(pm_local_to_repo "$local_path" 2>/dev/null) || rc_map=$?
+            if [ "$rc_map" -ne 0 ] || [ -z "$repo_path" ]; then
                 pal_log "warn" "Cold start: unknown system dir for device path: $local_path"
                 continue
             fi
@@ -153,11 +178,24 @@ cs_run() {
             if [ ! -f "$repo_file" ]; then
                 # Device-only: copy to repo
                 mkdir -p "$(dirname "$repo_file")"
-                cp "$local_path" "$repo_file"
+                if ! cp "$local_path" "$repo_file"; then
+                    pal_log "error" "Cold start: failed to copy $local_path to repo"
+                    printf 'fail\n' > "$cp_fail_tmp"
+                    break
+                fi
                 pal_log "info" "Cold start: pushed $repo_path from device"
             fi
             # Else: already handled in step 4
         done
+    fi
+
+    # Check for copy failures in step 5
+    local step5_failure
+    step5_failure=$(cat "$cp_fail_tmp")
+    rm -f "$cp_fail_tmp"
+    if [ -n "$step5_failure" ]; then
+        rm -f "$conflict_tmp"
+        return 1
     fi
 
     # Step 6: Detect and stage all changes

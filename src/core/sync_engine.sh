@@ -86,13 +86,26 @@ se_stage_files() {
     repo_dir="$1"
     file_list="$2"
 
+    local fail_file
+    fail_file=$(mktemp)
+    printf '' > "$fail_file"
+
     printf '%s\n' "$file_list" | while IFS= read -r filepath; do
         [ -z "$filepath" ] && continue
         if ! "$CONTINUITY_GIT_BIN" -C "$repo_dir" add "$filepath" 2>&1; then
             pal_log "error" "Failed to stage: $filepath"
-            return 1
+            printf 'fail\n' > "$fail_file"
+            break
         fi
     done
+
+    local had_failure
+    had_failure=$(cat "$fail_file")
+    rm -f "$fail_file"
+    if [ -n "$had_failure" ]; then
+        return 1
+    fi
+    return 0
 }
 
 # se_commit — commit staged files with auto-generated or custom message
