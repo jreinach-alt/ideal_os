@@ -136,35 +136,34 @@ When `git pull` detects a merge conflict on an `.srm` file:
 
 Resolution: User picks one (or the platform client auto-resolves by "keep newest" if configured). The `.local` and `.conflict` files are removed after resolution.
 
-#### 5. WiFi Monitor (`src/core/wifi_monitor.sh`)
+#### 5. Connectivity Checking
 
-Checks connectivity before attempting git push/pull.
+Network connectivity is checked via the PAL function `pal_is_online()`. Each platform implements this according to its capabilities:
 
-```sh
-# Simple connectivity check — can we reach GitHub?
-ping -c 1 -W 3 github.com >/dev/null 2>&1
-```
+- **Constrained devices (BusyBox):** `ping -c 1 -W 3 github.com` or `wget --spider`
+- **Full Linux:** Standard network checks
+- **Android:** `ConnectivityManager` API
 
 If offline:
 - Commits queue locally (git works offline natively)
 - Push attempts resume when connectivity returns
 - Pull happens on next boot or next connectivity event
 
-#### 6. Enrollment (`src/enrollment/`)
+#### 6. Enrollment (`src/core/enrollment.sh`)
 
 Device setup and credential management. Two paths:
 
-**SD Card Import (`src/enrollment/sd_card_import.sh`):**
-1. User places `<SD_ROOT>/.continuity/setup.json` on SD card from PC
-2. On boot, daemon detects setup file
-3. Imports repo URL and PAT
+**SD Card Import (`src/platforms/nextui/enroll_sd_card.sh`):**
+1. User places `setup.json` on SD card root from PC
+2. On boot, daemon detects setup file at `$CONTINUITY_SD_ROOT/setup.json`
+3. Imports repo URL, PAT, and device name
 4. Clones repo
 5. Deletes plaintext setup file
-6. Writes credential to device-specific secure-ish path
+6. Writes credential to `$CONTINUITY_REPO_DIR/.continuity/credentials`
 
-**Local Web Setup (`src/enrollment/web_setup.sh`):**
+**Local Web Setup (Sprint 1.2 — deferred):**
 1. Device starts BusyBox `httpd` on port 8080
-2. Serves a simple HTML form (paste repo URL + PAT)
+2. Serves a simple HTML form (paste repo URL + PAT + device name)
 3. User opens `http://<device-ip>:8080` on phone
 4. Form submits credentials to device
 5. Device clones repo, stops httpd
@@ -213,6 +212,7 @@ my-saves/
   "_schema_version": "1.0",
   "device_name": "my-brick",
   "platform": "nextui",
+  "enrolled_at": "2026-03-12T14:30:00Z",
   "last_sync": "2026-03-12T14:30:00Z",
   "last_push": "2026-03-12T14:30:05Z"
 }

@@ -104,6 +104,7 @@ Synthetic PAL for automated CI testing. All paths point to temp directories crea
 | `CONTINUITY_DEVICE_NAME` | `test-device` |
 | `CONTINUITY_PLATFORM` | `nextui` |
 | `CONTINUITY_GIT_BIN` | `git` |
+| `CONTINUITY_SD_ROOT` | `$TEST_TMPDIR/sdcard` |
 
 **Contract with callers:**
 - The caller must set `TEST_TMPDIR` to an existing writable directory before sourcing this file.

@@ -126,12 +126,14 @@ ch_handle_pull_conflict(repo_dir):
          remote version, while the .local files created in step 3 are
          untracked at this point and are preserved.
 
-  5. Stage all conflict artifacts (the .local and .conflict files):
+  5. Stage all conflict artifacts in a single call:
+       Build a newline-delimited list of all .local and .conflict files:
+       stage_list=""
        For each repo_path in conflicted:
-         local_file="$repo_dir/$repo_path.$CONTINUITY_DEVICE_NAME.local"
-         conflict_meta="$repo_dir/$repo_path.conflict"
-         se_stage_files "$repo_dir" "$repo_path.$CONTINUITY_DEVICE_NAME.local
-$repo_path.conflict"
+         stage_list="$stage_list$repo_path.$CONTINUITY_DEVICE_NAME.local
+$repo_path.conflict
+"
+       se_stage_files "$repo_dir" "$stage_list"
 
   6. Commit all conflict artifacts in a single commit:
        "$CONTINUITY_GIT_BIN" -C "$repo_dir" commit \
@@ -304,8 +306,9 @@ ch_resolve(repo_dir, repo_path, resolution):
        cp "$local_file" "$repo_dir/$repo_path"
        rm -f "$local_file" "$conflict_meta"
        "$CONTINUITY_GIT_BIN" -C "$repo_dir" add "$repo_path"
+       local_file_relpath=$(printf '%s' "$local_file" | sed "s|^$repo_dir/||")
        "$CONTINUITY_GIT_BIN" -C "$repo_dir" rm --cached \
-           "$(basename "$local_file")" \
+           "$local_file_relpath" \
            "$repo_path.conflict" 2>/dev/null || true
        "$CONTINUITY_GIT_BIN" -C "$repo_dir" commit \
            -m "resolve: keep local $repo_path"
@@ -353,6 +356,8 @@ ch_resolve(repo_dir, repo_path, resolution):
 **Implementation notes for `ch_resolve`:**
 
 The `keep_remote` and `keep_local` resolution paths both use `git rm --cached` to remove the `.local` and `.conflict` files from the index (since they were previously committed), then `rm -f` to delete them from the working tree, then commit. This is the correct sequence: `git rm --cached` removes from index without touching the working tree, then `rm -f` removes from disk, then the commit records the deletion.
+
+**Note on `git rm --cached`:** `se_stage_files` uses `git add` which cannot remove files from the index. For deletion of conflict artifacts, `ch_resolve` must use `$CONTINUITY_GIT_BIN -C "$repo_dir" rm --cached` directly. This is the only place in the codebase where raw `git rm` is used outside the sync engine, and it is acceptable because artifact cleanup is an operation unique to conflict resolution.
 
 The inline pseudocode above shows the logical intent. The actual implementation must handle the exact filename of the `.local` file (which includes the device name) carefully. Avoid hard-coding `$CONTINUITY_DEVICE_NAME` in `ch_resolve` — instead, derive the `.local` filename from what actually exists on disk using `find`.
 

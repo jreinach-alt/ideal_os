@@ -64,9 +64,13 @@ Implements the full cold start sync flow and the sentinel/commit-hash lifecycle.
 **Cold start flow — `cs_run(repo_dir)`:**
 
 ```
-1.  se_pull "$repo_dir"
-      — Fetch latest from remote. If offline (pal_is_online returns 1),
-        log a warning and continue (work with whatever is in the local clone).
+1.  If pal_is_online:
+      se_pull "$repo_dir"
+        — If se_pull returns 1 (diverged): log error, return 1
+        — If se_pull returns 2 (network error): log warn, set was_offline=true
+    Else:
+      pal_log "warn" "Cold start: offline — working with local clone only"
+      was_offline=true
 
 2.  cd_list_repo_saves "$repo_dir"
       — Enumerate .srm files currently in the repo working tree.
@@ -103,22 +107,29 @@ Implements the full cold start sync flow and the sentinel/commit-hash lifecycle.
       d. Else (repo file exists — already handled in step 4, skip):
            — No-op.
 
-6.  Stage all changes (new files, conflict .local files, deletions):
-      se_stage_files "$repo_dir"
+6.  Detect and stage all changes:
+      changed=$(cd_detect_changes "$repo_dir")
+      If changed is non-empty:
+        se_stage_files "$repo_dir" "$changed"
 
-7.  If there are staged changes (cd_detect_changes "$repo_dir" returns non-empty output):
-      se_commit "$repo_dir" "cold start sync from $CONTINUITY_DEVICE_NAME"
-      se_push "$repo_dir"
-        — If offline, se_push defers (returns 2). Log info and continue.
+7.  If changed is non-empty:
+      se_commit "$repo_dir" "$changed"
+      If pal_is_online:
+        se_push "$repo_dir"
+          — If se_push returns 2 (offline/deferred): log info, set was_offline=true
+          — If se_push returns 1 (persistent failure): log error, return 1
+      Else:
+        was_offline=true
     Else:
       pal_log "info" "Cold start: nothing to commit"
 
-8.  Store HEAD commit hash:
+8.  If was_offline is NOT true:
       head_hash=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" rev-parse HEAD)
       cs_store_commit "$repo_dir" "$head_hash"
 
-9.  Create sentinel:
-      cs_create_sentinel "$repo_dir"
+9.    cs_create_sentinel "$repo_dir"
+    Else:
+      pal_log "info" "Cold start: offline — sentinel deferred until next boot with connectivity"
 
 10. pal_log "info" "Cold start complete"
     return 0
@@ -239,7 +250,7 @@ None. All prior sprint outputs (`src/core/pal.sh`, `src/core/path_mapper.sh`, `s
 23. **Differing saves (same game on both sides):** Repo version is written to device. Device version is preserved as `<repo_path>.$CONTINUITY_DEVICE_NAME.local` in the repo. The `.local` file is staged and committed. Sentinel and commit hash created.
 24. **New save on device not present in repo:** Device file is copied to repo at correct path. File is staged and committed. Sentinel and commit hash created.
 25. **Multiple systems mixed:** Scenario combining cases 20–24 across several systems — all handled correctly in a single `cs_run` call.
-26. **Offline (pal_is_online returns 1):** `se_pull` skips (or sync engine defers). `cs_run` continues with local clone state. Push is skipped (sync engine defers). Sentinel and commit hash are NOT created (commit hash requires a push to be reliable; or if the sync engine commits locally only, the local HEAD is used). See Open Questions.
+26. **Offline (pal_is_online returns 1):** `cs_run` sets `was_offline=true` and skips `se_pull`. Local saves are still merged and committed locally. `se_push` is skipped. Because `was_offline` is true, sentinel and commit hash are NOT created — steps 8-9 are skipped entirely, and `cs_run` logs that sentinel is deferred. On next boot with connectivity, cold start re-runs from scratch (idempotent).
 27. **Unknown system directory on device:** `pm_local_to_repo` returns 1 — file is skipped with a warning. Other files sync normally.
 28. **Unknown canonical system in repo:** `pm_repo_to_local` returns 1 — file is skipped with a warning. Other files sync normally.
 29. **`pal_on_conflict` hook:** If defined, called once per conflict with the `.local` file's repo-relative path as argument.

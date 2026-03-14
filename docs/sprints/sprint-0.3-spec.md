@@ -28,23 +28,25 @@ The sync engine is a prerequisite for enrollment: `enroll_run` needs `se_clone` 
 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
-| `se_init` | `(repo_dir, device_name)` | void | Set module-level repo directory and device name. Must be called before any other `se_*` function. |
+| `se_init` | `(repo_dir, device_name)` | void | Set module-level device name (`_SE_DEVICE_NAME`). Configure `user.email` and `user.name` in the repo's local git config if not already set. Must be called before `se_commit` (which needs the device name for commit trailers). Does NOT need to be called before `se_pull`, `se_push`, etc. |
 | `se_clone` | `(repo_url, target_dir)` | 0 success, 1 failure | `git clone <repo_url> <target_dir>`. Used only during enrollment. Runs `$CONTINUITY_GIT_BIN clone`. |
-| `se_pull` | `()` | 0 success, 1 diverged, 2 network error | `git pull --ff-only origin main`. Returns 1 if fast-forward is not possible (diverged history), 2 on network failure. |
-| `se_stage_files` | `(file_list)` | 0 success, 1 failure | `git add` each path in the newline-delimited `file_list`. Paths are relative to `GIT_WORK_TREE`. |
-| `se_commit` | `(file_list)` | 0 success, 1 failure | Commit staged files with auto-generated message. Subject line: `<system>/<filename> updated` (1 file) or `N saves updated` (multiple). Trailer lines: `device: <name>` and `timestamp: <ISO 8601>`. |
-| `se_push` | `()` | 0 success, 1 persistent failure | `git push origin main`. Retries on network error with exponential backoff (2s, 4s, 8s, 16s). Returns 1 after all retries exhausted. |
-| `se_has_staged_changes` | `()` | 0 staged changes exist, 1 index clean | Check `git diff --cached --quiet`. |
-| `se_has_unpushed_commits` | `()` | 0 local is ahead, 1 up to date | Check `git log @{u}..HEAD`. |
-| `se_get_head_commit` | `()` | prints hash to stdout | Print the current HEAD commit hash. |
+| `se_pull` | `(repo_dir)` | 0 success, 1 diverged, 2 network error | `git -C "$repo_dir" pull --ff-only origin main`. Returns 1 if fast-forward is not possible (diverged history), 2 on network failure. |
+| `se_stage_files` | `(repo_dir, file_list)` | 0 success, 1 failure | `git -C "$repo_dir" add` each path in the newline-delimited `file_list`. Paths are relative to the repo working tree. |
+| `se_commit` | `(repo_dir, file_list)` | 0 success, 1 failure | Commit staged files with auto-generated message. Subject line: `<system>/<filename> updated` (1 file) or `N saves updated` (multiple). Trailer lines: `device: <name>` and `timestamp: <ISO 8601>`. Uses `_SE_DEVICE_NAME` set by `se_init`. An optional third argument overrides the auto-generated subject line (used by enrollment for `"enroll: register <device_name>"`). |
+| `se_push` | `(repo_dir)` | 0 success, 1 persistent failure, 2 offline/deferred | `git -C "$repo_dir" push origin main`. Retries on network error with exponential backoff (2s, 4s, 8s, 16s). Returns 1 after all retries exhausted. Returns 2 if `pal_is_online` returns 1 at time of call (caller asked to push but device is offline — commit is queued locally). |
+| `se_has_staged_changes` | `(repo_dir)` | 0 staged changes exist, 1 index clean | Check `git -C "$repo_dir" diff --cached --quiet`. |
+| `se_has_unpushed_commits` | `(repo_dir)` | 0 local is ahead, 1 up to date | Check `git -C "$repo_dir" log @{u}..HEAD`. |
+| `se_get_head_commit` | `(repo_dir)` | prints hash to stdout | Print the current HEAD commit hash via `git -C "$repo_dir" rev-parse HEAD`. |
 
 **Implementation notes:**
 
 - All git invocations use `$CONTINUITY_GIT_BIN` (from PAL) — never the literal string `git`.
-- All git commands specify the repo explicitly using `-C "$_SE_REPO_DIR"` (or by setting `GIT_DIR`/`GIT_WORK_TREE` env vars) — never depend on the current working directory.
-- Module-level state is held in `_SE_REPO_DIR` and `_SE_DEVICE_NAME` (prefixed with `_SE_` to signal private module state).
+- All git commands specify the repo explicitly using `-C "$repo_dir"` — never depend on the current working directory. The `repo_dir` parameter is passed to every function that touches git.
+- Module-level state is limited to `_SE_DEVICE_NAME` (prefixed with `_SE_` to signal private module state). There is no `_SE_REPO_DIR` — the repo directory is always passed explicitly.
 - `se_clone` does not call `se_init`. The caller is responsible for calling `se_init` after a successful clone.
 - `se_push` captures stderr into a temp file to distinguish network errors (containing `unable to connect`, `failed to connect`, `could not resolve`, `timeout`, `SSL`) from other errors (auth failure, force-push rejection — these should not be retried).
+- `se_push` checks `pal_is_online` before attempting a push. If offline, it returns 2 immediately without retrying. This allows callers to distinguish "tried and failed" (return 1) from "didn't try because offline" (return 2).
+- The optional third argument to `se_commit` allows callers (like enrollment) to specify a custom commit subject line. When provided, it replaces the auto-generated `<system>/<filename> updated` or `N saves updated` subject. The trailer lines (`device:` and `timestamp:`) are always appended regardless.
 - Commit message format:
   ```
   snes/super_metroid.srm updated
@@ -57,13 +59,13 @@ The sync engine is a prerequisite for enrollment: `enroll_run` needs `se_clone` 
   ```sh
   file_list="snes/super_metroid.srm
   gba/minish_cap.srm"
-  se_stage_files "$file_list"
+  se_stage_files "$repo_dir" "$file_list"
   ```
 - **Important:** `se_stage_files` must use `git add <path>` (not `git add -u`). Using `-u` would skip untracked files, which breaks Sprint 0.8's conflict handler (`.local` and `.conflict` artifacts are new untracked files that must be staged). Coding agents must verify this during implementation.
 - Git configuration for the repo (user.email, user.name) is set to minimal values during `se_init` if not already set. This prevents git commit from failing on devices with no global git config:
   ```sh
-  $CONTINUITY_GIT_BIN -C "$_SE_REPO_DIR" config user.email "continuity@device"
-  $CONTINUITY_GIT_BIN -C "$_SE_REPO_DIR" config user.name "Continuity"
+  $CONTINUITY_GIT_BIN -C "$repo_dir" config user.email "continuity@device"
+  $CONTINUITY_GIT_BIN -C "$repo_dir" config user.name "Continuity"
   ```
 
 ---
@@ -89,22 +91,27 @@ enroll_run(repo_url, device_name, pat)
   1. Validate: repo_url non-empty, device_name non-empty, pat non-empty
   2. enroll_store_credential(pat)            # Write PAT to .continuity/credentials
                                              # (temp location pre-clone — see note below)
+  2.5. Configure temporary git credential helper for the clone operation:
+       Write a temporary credential helper script that reads from the temp PAT location.
+       Set GIT_ASKPASS or configure git credential.helper globally for this process.
   3. se_clone(repo_url, CONTINUITY_REPO_DIR) # git clone
+  3.5. Verify default branch is main:
+       branch=$("$CONTINUITY_GIT_BIN" -C "$CONTINUITY_REPO_DIR" branch --show-current)
+       If branch != "main": pal_log "error" "Repo default branch is '$branch', expected 'main'"; return 1
   4. se_init(CONTINUITY_REPO_DIR, device_name)
   5. enroll_configure_git_auth(CONTINUITY_REPO_DIR)  # Configure credential helper
   6. enroll_write_device_json(device_name, CONTINUITY_PLATFORM)
   7. Write device_name to .continuity/device_name     # Local-only, gitignored
   8. Ensure .continuity/.gitignore exists with:
        credentials
+       git_credential_helper.sh
        device_name
        sentinel
        last_known_commit
        clean_shutdown
-  9. se_stage_files(".continuity/devices/<device_name>.json")
-     se_stage_files(".continuity/.gitignore")
-  10. se_commit(".continuity/devices/<device_name>.json\n.continuity/.gitignore")
-      (subject: "enroll: register <device_name>")
-  11. se_push()
+  9. se_stage_files "$CONTINUITY_REPO_DIR" ".continuity/devices/<device_name>.json\n.continuity/.gitignore"
+  10. se_commit "$CONTINUITY_REPO_DIR" ".continuity/devices/<device_name>.json\n.continuity/.gitignore" "enroll: register <device_name>"
+  11. se_push "$CONTINUITY_REPO_DIR"
   12. pal_log "info" "Enrollment complete: <device_name>"
   Return 0
 ```
@@ -347,16 +354,17 @@ These files exist in the remote before enrollment, so the enrolled device can te
 ### Sync Engine
 
 1. `se_clone` clones a local bare repo into a specified target directory. The target directory becomes a valid git working tree.
-2. `se_init` sets the module-level repo dir and device name. Subsequent calls to `se_commit` embed the correct device name in the commit trailer.
+2. `se_init` sets the module-level device name (`_SE_DEVICE_NAME`) and configures git user identity. Subsequent calls to `se_commit` embed the correct device name in the commit trailer.
 3. `se_init` sets `user.email` and `user.name` in the repo's local git config if not already set.
-4. `se_stage_files` adds all listed files to the index. Calling `se_has_staged_changes` after a valid stage returns 0.
+4. `se_stage_files` takes `repo_dir` and a file list, adds all listed files to the index. Calling `se_has_staged_changes` after a valid stage returns 0.
 5. `se_commit` with one file produces a commit with subject `<system>/<filename> updated`.
 6. `se_commit` with three files produces a commit with subject `3 saves updated`.
 7. `se_commit` embeds `device: <device_name>` and `timestamp: <ISO 8601>` in the commit body.
-8. `se_push` pushes to the remote and returns 0 on success.
+8. `se_push` takes `repo_dir`, pushes to the remote and returns 0 on success.
 9. `se_push` retries up to four times on network error (verify via stderr mock that simulates `unable to connect`), with delays of approximately 2s, 4s, 8s, 16s.
 10. `se_push` returns 1 after all retries are exhausted without success.
-11. `se_pull` returns 0 on a clean fast-forward pull.
+11. `se_push` returns 2 when `pal_is_online` returns 1 (device is offline at time of push attempt).
+12. `se_pull` returns 0 on a clean fast-forward pull.
 12. `se_pull` returns 1 when the remote has diverged and fast-forward is not possible.
 13. `se_pull` returns 2 when the network is unreachable (simulated via an invalid remote URL).
 14. `se_has_unpushed_commits` returns 0 after a commit that has not been pushed; returns 1 after a successful push.
@@ -445,7 +453,7 @@ All unit tests are self-contained: they create temp directories, do all work ins
 - Test `enroll_is_enrolled` after enrollment: returns 0.
 
 **`tests/unit/nextui/test_enroll_sd_card.sh`:**
-- Create a temp dir simulating SD card root. Set `_ESD_SD_CARD_ROOT` to this dir.
+- Create a temp dir simulating SD card root. Set `CONTINUITY_SD_ROOT` to this dir.
 - Test `esd_detect_setup_file`: returns 1 when absent, 0 when present.
 - Test `esd_parse_setup_file` valid input: all three variables set correctly.
 - Test `esd_parse_setup_file` missing `device_name` field: returns 1.

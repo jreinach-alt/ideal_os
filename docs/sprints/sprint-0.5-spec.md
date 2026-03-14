@@ -34,8 +34,8 @@ Platform-agnostic boot pull logic. Assumes the PAL has been sourced, validated, 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
 | `bp_run` | `(repo_dir)` | 0 success/no-op, 1 unrecoverable error, 2 network error | Full boot pull flow. Reads stored commit, pulls remote, diffs old..new, applies changed saves, updates stored commit, touches sentinel. See flow detail below. |
-| `bp_get_remote_changes` | `(repo_dir, old_commit)` | prints newline-delimited repo-relative paths to stdout; 0 on success, 1 on failure | Run `git diff --name-only <old_commit>..HEAD` in `repo_dir`. Filter output to `.srm` files only. Print each matching path on its own line. Returns 1 if the git command fails. |
-| `bp_apply_remote_saves` | `(repo_dir, changed_files)` | 0 on success, 1 on first copy failure | For each repo-relative path in the newline-delimited `changed_files` string: resolve to an absolute local device path via `pm_repo_to_local`, create the target directory if needed (`mkdir -p`), copy the file from the repo working tree to the device save dir. Log each copy via `pal_log`. Returns 0 if all copies succeed. Returns 1 immediately on the first copy failure, after logging the error. |
+| `bp_get_remote_changes` | `(repo_dir, old_commit)` | prints newline-delimited repo-relative paths to stdout; 0 on success, 1 on failure | Run `git diff --name-only <old_commit>..HEAD` in `repo_dir`. Filter output to `.srm` files only. Print each matching path on its own line. Returns 1 if the git command fails. Note: `git diff --name-only` may include files that were deleted on the remote. These will appear in the diff output but will not exist in the working tree after the pull. `bp_apply_remote_saves` must handle this case — if the repo file does not exist after pull (deleted on remote), skip copying and optionally remove the corresponding device file. |
+| `bp_apply_remote_saves` | `(repo_dir, changed_files)` | 0 on success, 1 on first copy failure | For each repo-relative path in the newline-delimited `changed_files` string: resolve to an absolute local device path via `pm_repo_to_local`, create the target directory if needed (`mkdir -p`), copy the file from the repo working tree to the device save dir. Log each copy via `pal_log`. Returns 0 if all copies succeed. Returns 1 immediately on the first copy failure, after logging the error. If the repo file at `$repo_dir/$repo_path` does not exist (deleted on remote), skip the copy. Optionally log an info message. Do not treat a missing repo file as an error. |
 
 ---
 
@@ -43,12 +43,12 @@ Platform-agnostic boot pull logic. Assumes the PAL has been sourced, validated, 
 
 ```
 bp_run(repo_dir):
-  1. old_commit=$(cs_read_commit)
+  1. old_commit=$(cs_read_commit "$repo_dir")
      — If cs_read_commit returns empty or fails:
          pal_log "warn" "No stored commit found — cold start may not have run"
          return 1
 
-  2. se_pull()
+  2. se_pull "$repo_dir"
      — If se_pull returns 2 (network error):
          pal_log "warn" "Boot pull skipped — network unavailable"
          return 2
@@ -57,11 +57,11 @@ bp_run(repo_dir):
          return 1
          (Sprint 0.8 will replace this with a call to the conflict handler)
 
-  3. new_commit=$(se_get_head_commit)
+  3. new_commit=$(se_get_head_commit "$repo_dir")
 
   4. If old_commit == new_commit:
          pal_log "info" "Boot pull: no remote changes since last sync"
-         touch "$CONTINUITY_REPO_DIR/.continuity/sentinel"
+         touch "$repo_dir/.continuity/sentinel"
          return 0
 
   5. changed_files=$(bp_get_remote_changes "$repo_dir" "$old_commit")
@@ -71,8 +71,8 @@ bp_run(repo_dir):
 
   6. If changed_files is empty (pull happened but no .srm files changed):
          pal_log "info" "Boot pull: remote changes contain no .srm files"
-         cs_store_commit "$new_commit"
-         touch "$CONTINUITY_REPO_DIR/.continuity/sentinel"
+         cs_store_commit "$repo_dir" "$new_commit"
+         touch "$repo_dir/.continuity/sentinel"
          return 0
 
   7. bp_apply_remote_saves "$repo_dir" "$changed_files"
@@ -80,9 +80,9 @@ bp_run(repo_dir):
          pal_log "error" "Boot pull: failed to apply one or more saves"
          return 1
 
-  8. cs_store_commit "$new_commit"
+  8. cs_store_commit "$repo_dir" "$new_commit"
 
-  9. touch "$CONTINUITY_REPO_DIR/.continuity/sentinel"
+  9. touch "$repo_dir/.continuity/sentinel"
 
   10. pal_log "info" "Boot pull complete"
       return 0
@@ -120,11 +120,11 @@ The git diff output may include non-`.srm` files (e.g. `.continuity/devices/<nam
 
 **Sentinel path:**
 
-The sentinel file lives at `$CONTINUITY_REPO_DIR/.continuity/sentinel`. This is the same sentinel created by cold start (Sprint 0.4). Boot pull touches it (updates its mtime) so the runtime poll's `find -newer sentinel` has a fresh baseline immediately after boot pull completes.
+The sentinel file lives at `$repo_dir/.continuity/sentinel`. This is the same sentinel created by cold start (Sprint 0.4). Boot pull touches it (updates its mtime) so the runtime poll's `find -newer sentinel` has a fresh baseline immediately after boot pull completes.
 
 **Stored commit functions:**
 
-`cs_read_commit` and `cs_store_commit` are defined in `src/core/cold_start.sh` (Sprint 0.4). `boot_pull.sh` does not re-implement them — it calls them directly. They read from and write to `$CONTINUITY_REPO_DIR/.continuity/last_known_commit`.
+`cs_read_commit(repo_dir)` and `cs_store_commit(repo_dir, commit_hash)` are defined in `src/core/cold_start.sh` (Sprint 0.4). `boot_pull.sh` does not re-implement them — it calls them directly, passing `$repo_dir` as the first argument. They read from and write to `$repo_dir/.continuity/last_known_commit`.
 
 **All git invocations:**
 

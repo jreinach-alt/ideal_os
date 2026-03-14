@@ -42,7 +42,7 @@ Single-file module implementing stale boot detection and recovery. Assumes the P
 |----------|-----------|---------|-------------|
 | `sb_is_stale` | `(repo_dir)` | 0 if stale (recovery needed), 1 if clean | Returns 0 if `$repo_dir/.continuity/sentinel` exists AND `$repo_dir/.continuity/clean_shutdown` does NOT exist. Returns 1 if the sentinel does not exist (cold start case — not stale boot's concern) or if the clean shutdown marker is present (clean boot — use boot pull). |
 | `sb_mark_clean_shutdown` | `(repo_dir)` | 0 on success, 1 on error | Create (or overwrite) `$repo_dir/.continuity/clean_shutdown` with the current ISO-8601 timestamp. This is called by the daemon on SIGTERM before the daemon exits. |
-| `sb_clear_shutdown_marker` | `(repo_dir)` | 0 on success, 1 if file did not exist or removal failed | Remove `$repo_dir/.continuity/clean_shutdown` if it exists. Called by `sb_run` at the start of recovery to consume the absence signal. Returns 0 if the file did not exist (idempotent). |
+| `sb_clear_shutdown_marker` | `(repo_dir)` | 0 on success (including when file did not exist — idempotent), 1 if removal failed | Remove `$repo_dir/.continuity/clean_shutdown` if it exists. Called by `sb_run` at the start of recovery to consume the absence signal. Returns 0 if the file did not exist (idempotent). |
 | `sb_run` | `(repo_dir)` | 0 on success/no-op, 1 on unrecoverable error, 2 on network error | Full stale boot recovery flow. Orchestrates all other `sb_*` functions plus calls to prior sprint modules. Full flow described below. |
 
 ---
@@ -57,7 +57,7 @@ sb_run(repo_dir):
      — Do not abort on failure (e.g. marker already absent is fine — return 0
        from sb_clear_shutdown_marker is expected in that case).
 
-  2. If pal_is_online AND se_has_unpushed_commits returns 0 (commits are pending):
+  2. If pal_is_online AND se_has_unpushed_commits "$repo_dir" returns 0 (commits are pending):
        se_push "$repo_dir"
          — If se_push returns 1 (persistent failure):
              pal_log "warn" "Stale boot: push of interrupted session commits failed — continuing"
@@ -98,8 +98,9 @@ sb_run(repo_dir):
         — Enumerate ALL .srm files on device (not find -newer — sentinel is stale).
      b. changed_count=0
         — Use a temp file to track whether any changes were found across the loop.
+        # Do NOT use `trap EXIT` here — it would replace the caller's trap.
+        # Clean up the temp file explicitly after the loop.
         tmpfile=$(mktemp)
-        trap 'rm -f "$tmpfile"' EXIT  (or manage explicitly)
         printf '0\n' > "$tmpfile"
      c. For each device save (while IFS= read -r device_path):
           repo_path=$(pm_local_to_repo "$device_path")
@@ -118,7 +119,7 @@ sb_run(repo_dir):
   5. If changed_count is 1 (any catches were made):
        staged=$(cd_detect_changes "$repo_dir")
        If staged is non-empty:
-         se_stage_files "$staged"
+         se_stage_files "$repo_dir" "$staged"
          se_commit "$repo_dir" "stale boot catch-up from $CONTINUITY_DEVICE_NAME"
            — On failure: pal_log "error", return 1
          If pal_is_online:
@@ -184,6 +185,8 @@ For the current sprint: if `se_pull` succeeds (fast-forward) and the catch-up sc
 **Temp file management in step 4:**
 
 ```sh
+# NOTE: Do NOT use 'trap EXIT' here — it would replace the caller's trap.
+# Clean up the temp file explicitly after the loop.
 _sb_tmpfile=$(mktemp)
 printf '0\n' > "$_sb_tmpfile"
 cd_list_device_saves | while IFS= read -r device_path; do
