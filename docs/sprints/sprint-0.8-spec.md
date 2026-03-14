@@ -136,6 +136,10 @@ $repo_path.conflict
        se_stage_files "$repo_dir" "$stage_list"
 
   6. Commit all conflict artifacts in a single commit:
+       # NOTE: This intentionally uses raw `git commit -m` instead of
+       # se_commit. Conflict preservation commits have their own message
+       # format and do not need the device/timestamp trailers that
+       # se_commit appends. This bypass is by design.
        "$CONTINUITY_GIT_BIN" -C "$repo_dir" commit \
            -m "conflict: $(printf '%s\n' "$conflicted" | wc -l | tr -d ' ') save(s) preserved from $CONTINUITY_DEVICE_NAME"
        — On failure: pal_log "error" "Conflict handler: commit failed"; return 1

@@ -39,9 +39,9 @@ User creates a fine-grained Personal Access Token on GitHub:
 
 | Platform | Location | Protection |
 |----------|----------|-----------|
-| NextUI | `/mnt/SDCARD/.continuity/credentials` | Hidden dotfile (FAT32, no real protection) |
-| Onion OS | `/mnt/SDCARD/.continuity/credentials` | Same |
-| RetroDeck | `~/.config/continuity/credentials` | Linux file permissions (0600) |
+| NextUI | `$CONTINUITY_REPO_DIR/.continuity/credentials` | Hidden dotfile, gitignored (FAT32, no real protection) |
+| Onion OS | `$CONTINUITY_REPO_DIR/.continuity/credentials` | Same |
+| RetroDeck | `$CONTINUITY_REPO_DIR/.continuity/credentials` | Linux file permissions (0600), gitignored |
 | Android | App internal storage | Android sandbox |
 
 **Constrained device reality:** On FAT32 SD cards, there is no meaningful file-level protection. The PAT is effectively plaintext. This is acceptable because:

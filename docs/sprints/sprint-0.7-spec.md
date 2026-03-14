@@ -43,7 +43,7 @@ Single-file module implementing stale boot detection and recovery. Assumes the P
 | `sb_is_stale` | `(repo_dir)` | 0 if stale (recovery needed), 1 if clean | Returns 0 if `$repo_dir/.continuity/sentinel` exists AND `$repo_dir/.continuity/clean_shutdown` does NOT exist. Returns 1 if the sentinel does not exist (cold start case — not stale boot's concern) or if the clean shutdown marker is present (clean boot — use boot pull). |
 | `sb_mark_clean_shutdown` | `(repo_dir)` | 0 on success, 1 on error | Create (or overwrite) `$repo_dir/.continuity/clean_shutdown` with the current ISO-8601 timestamp. This is called by the daemon on SIGTERM before the daemon exits. |
 | `sb_clear_shutdown_marker` | `(repo_dir)` | 0 on success (including when file did not exist — idempotent), 1 if removal failed | Remove `$repo_dir/.continuity/clean_shutdown` if it exists. Called by `sb_run` at the start of recovery to consume the absence signal. Returns 0 if the file did not exist (idempotent). |
-| `sb_run` | `(repo_dir)` | 0 on success/no-op, 1 on unrecoverable error, 2 on network error | Full stale boot recovery flow. Orchestrates all other `sb_*` functions plus calls to prior sprint modules. Full flow described below. |
+| `sb_run` | `(repo_dir)` | 0 on success/no-op, 1 on unrecoverable error | Full stale boot recovery flow. Orchestrates all other `sb_*` functions plus calls to prior sprint modules. Full flow described below. |
 
 ---
 
@@ -120,7 +120,7 @@ sb_run(repo_dir):
        staged=$(cd_detect_changes "$repo_dir")
        If staged is non-empty:
          se_stage_files "$repo_dir" "$staged"
-         se_commit "$repo_dir" "stale boot catch-up from $CONTINUITY_DEVICE_NAME"
+         se_commit "$repo_dir" "$staged" "stale boot catch-up from $CONTINUITY_DEVICE_NAME"
            — On failure: pal_log "error", return 1
          If pal_is_online:
            se_push "$repo_dir"
@@ -327,7 +327,7 @@ None. All target directories already exist per prior sprint structure.
 34. On success, the sentinel mtime is updated (via `rp_update_sentinel`) as the final step.
 35. On success, `last_known_commit` reflects the HEAD of the repo after all commits in this sprint's recovery run.
 36. When `sb_run` returns 1 (error), the sentinel may or may not have been updated (steps before the failure may have partially completed). The sentinel is NOT guaranteed to be updated on error return.
-37. When `sb_run` returns 1 or 2, a subsequent `sb_is_stale` call returns 0 (sentinel still present, clean shutdown marker still absent — recovery is incomplete, so the next boot should retry).
+37. When `sb_run` returns 1, a subsequent `sb_is_stale` call returns 0 (sentinel still present, clean shutdown marker still absent — recovery is incomplete, so the next boot should retry).
 
 ### Cross-Cutting
 

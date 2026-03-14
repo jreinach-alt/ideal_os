@@ -91,8 +91,16 @@ Implements the full cold start sync flow and the sentinel/commit-hash lifecycle.
            conflict_name="$repo_path.$CONTINUITY_DEVICE_NAME.local"
            cp "$local_path" "$repo_dir/$conflict_name"
            cp "$repo_file" "$local_path"
+           — Write .conflict metadata alongside the .local file so that
+             ch_list_conflicts and ch_resolve (Sprint 0.8) can discover and
+             resolve cold start conflicts. Write JSON to
+             "$repo_dir/$repo_path.conflict" via printf:
+               {"canonical": "$repo_path",
+                "local_device": "$CONTINUITY_DEVICE_NAME",
+                "timestamp": "<current ISO 8601 from date -u>",
+                "source": "cold_start"}
            pal_log "warn" "Cold start: conflict on $repo_path — device version preserved as $conflict_name"
-           — (optional hook) pal_on_conflict "$conflict_name" if function is defined
+           — (optional hook) pal_on_conflict "$repo_path" if function is defined
       e. Else (cmp -s returns 0 — files identical):
            — No-op. Do not write, do not log.
 
@@ -166,7 +174,7 @@ These `.local` files are committed to the repo (they are intentionally tracked).
 
 **Calling the optional `pal_on_conflict` hook:**
 
-If `pal_on_conflict` is defined as a function (check with `command -v pal_on_conflict >/dev/null 2>&1`), call it with the conflict file's repo-relative path as the single argument after creating the conflict file. This allows platforms to surface a notification. If the function is not defined, skip silently.
+If `pal_on_conflict` is defined as a function (check with `command -v pal_on_conflict >/dev/null 2>&1`), call it with the canonical `.srm` repo-relative path (e.g., `snes/super_metroid.srm`) as the single argument after creating the conflict file. This matches the standardized PAL contract used by Sprint 0.8's conflict handler. If the function is not defined, skip silently.
 
 **Implementation notes:**
 
@@ -253,7 +261,7 @@ None. All prior sprint outputs (`src/core/pal.sh`, `src/core/path_mapper.sh`, `s
 26. **Offline (pal_is_online returns 1):** `cs_run` sets `was_offline=true` and skips `se_pull`. Local saves are still merged and committed locally. `se_push` is skipped. Because `was_offline` is true, sentinel and commit hash are NOT created — steps 8-9 are skipped entirely, and `cs_run` logs that sentinel is deferred. On next boot with connectivity, cold start re-runs from scratch (idempotent).
 27. **Unknown system directory on device:** `pm_local_to_repo` returns 1 — file is skipped with a warning. Other files sync normally.
 28. **Unknown canonical system in repo:** `pm_repo_to_local` returns 1 — file is skipped with a warning. Other files sync normally.
-29. **`pal_on_conflict` hook:** If defined, called once per conflict with the `.local` file's repo-relative path as argument.
+29. **`pal_on_conflict` hook:** If defined, called once per conflict with the canonical `.srm` repo-relative path as argument (e.g., `snes/super_metroid.srm`, not the `.local` path), matching the standardized PAL contract.
 30. **Failed `se_pull`:** `cs_run` returns 1 immediately. No device files written. No sentinel created.
 31. Sentinel is NOT created if `cs_run` returns 1 (error in any step).
 32. `cold_start.sh` passes `shellcheck` with no errors.

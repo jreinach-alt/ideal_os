@@ -3,7 +3,8 @@
   "_description": "Path mapping for Steam Deck running RetroDeck (Flatpak).",
   "platform": "retrodeck",
   "device_family": "steam_deck",
-  "saves_root": "~/.var/app/net.retrodeck.retrodeck/data/saves",
+  "saves_root": "/home/{user}/.var/app/net.retrodeck.retrodeck/data/saves",
+  "_saves_root_note": "Informational only. Runtime path construction uses $CONTINUITY_SAVES_ROOT from the PAL, not this field.",
   "system_paths": {
     "gb": "gb",
     "gbc": "gbc",

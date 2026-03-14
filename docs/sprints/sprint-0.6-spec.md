@@ -18,7 +18,7 @@ Implement the runtime poll cycle — the mechanism by which Continuity detects s
 - `docs/roadmap.md` — Sprint 0.6 scope, acceptance criteria, and relationship to Sprint 1.1 (daemon loop)
 - `src/core/pal.sh` — PAL validator (Sprint 0.2 output, assumed present)
 - `src/core/path_mapper.sh` — `pm_local_to_repo()`, `pm_list_watched_dirs()` (Sprint 0.2 output, assumed present)
-- `src/core/sync_engine.sh` — `se_stage_files(repo_dir, file_list)`, `se_commit(repo_dir, file_list)`, `se_push(repo_dir)`, `se_has_unpushed_commits()` (Sprint 0.3 output, assumed present)
+- `src/core/sync_engine.sh` — `se_stage_files(repo_dir, file_list)`, `se_commit(repo_dir, file_list)`, `se_push(repo_dir)`, `se_has_unpushed_commits(repo_dir)` (Sprint 0.3 output, assumed present)
 - `src/core/change_detector.sh` — `cd_detect_changes()` (Sprint 0.4 output, assumed present)
 - `src/core/cold_start.sh` — `cs_store_commit()` (Sprint 0.4 output, assumed present)
 
@@ -88,7 +88,7 @@ rp_run(repo_dir):
      Else:
        pal_log "info" "Poll: offline — commit queued locally"
 
-  8. head_hash=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" rev-parse HEAD)
+  8. head_hash=$(se_get_head_commit "$repo_dir")
      cs_store_commit "$repo_dir" "$head_hash"
        — On failure: pal_log "error", return 1
 

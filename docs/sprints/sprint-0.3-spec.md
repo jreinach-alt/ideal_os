@@ -2,7 +2,7 @@
 
 **Status:** Draft — Awaiting Approval
 **Date:** 2026-03-13
-**Dependencies:** Sprint 0.2 (PAL framework, path mapper, sync engine)
+**Dependencies:** Sprint 0.2 (PAL framework, path mapper)
 
 ## Goal
 
@@ -88,7 +88,10 @@ Platform-agnostic enrollment logic. Called by platform enrollment triggers (SD c
 
 ```
 enroll_run(repo_url, device_name, pat)
-  1. Validate: repo_url non-empty, device_name non-empty, pat non-empty
+  1. Validate: repo_url non-empty, device_name non-empty, pat non-empty.
+     Validate device_name format: must match [a-z0-9-], must not be empty,
+     must not start or end with a hyphen, must not exceed 32 characters.
+     Return 1 with descriptive error if validation fails.
   2. enroll_store_credential(pat)            # Write PAT to .continuity/credentials
                                              # (temp location pre-clone — see note below)
   2.5. Configure temporary git credential helper for the clone operation:

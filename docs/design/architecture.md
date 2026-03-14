@@ -330,7 +330,7 @@ Git detects conflicts natively during `git pull`. The conflict handler intercept
 |------|----------|
 | `prompt` (default) | Platform client notifies user, offers choice |
 | `keep_newest` | Auto-resolve by timestamp — most recent write wins |
-| `keep_device` | Always prefer a specific device's saves |
+| `keep_device` | Always prefer a specific device's saves *(deferred to post-1.0 — not implemented in Phase 0)* |
 
 Resolution removes `.local` and `.conflict` files, commits the result.
 

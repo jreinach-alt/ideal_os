@@ -62,7 +62,7 @@ Every PAL implementation must set these variables before `pal_init()` returns:
 |----------|------|-------------|------------------|
 | `CONTINUITY_SAVES_ROOT` | path | Root directory containing system save subdirectories | `/mnt/SDCARD/Saves` |
 | `CONTINUITY_REPO_DIR` | path | Path to the local git repo clone | `/mnt/SDCARD/.continuity/repo` |
-| `CONTINUITY_DEVICE_NAME` | string | Human-readable device identifier (set during enrollment) | `my-brick` |
+| `CONTINUITY_DEVICE_NAME` | string | Human-readable device identifier (set during enrollment). Must contain only lowercase alphanumeric characters and hyphens (`[a-z0-9-]`), must not start or end with a hyphen, must not contain dots, spaces, or path separators, and must be at most 32 characters. Validated during enrollment. | `my-brick` |
 | `CONTINUITY_PLATFORM` | string | Platform identifier matching a platform map filename | `nextui` |
 | `CONTINUITY_GIT_BIN` | path | Path to the git binary (or just `"git"` if on PATH) | `/mnt/SDCARD/Tools/Continuity.pak/bin/git` |
 
@@ -86,7 +86,7 @@ Every PAL implementation must set these variables before `pal_init()` returns:
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
 | `pal_on_sync_complete` | `()` | void | Hook called after a successful sync cycle. Platform can use this for notifications, UI updates, etc. |
-| `pal_on_conflict` | `(repo_path)` | void | Hook called when a conflict `.local` file is created. Platform can notify the user. |
+| `pal_on_conflict` | `(canonical_repo_path)` | void | Hook called when a conflict `.local` file is created. Receives the canonical `.srm` repo path (e.g., `gba/minish_cap.srm`), not the `.local` file path. Platform can notify the user. |
 
 ---
 
@@ -264,8 +264,16 @@ pal_validate || exit 1
 
 # Now call core functions — they use PAL variables/functions transparently
 pm_load_platform_map "$(pal_get_platform_map)"
+# NOTE: This assumes enrollment is already complete. The daemon boot
+# sequence must call enroll_is_enrolled() before reaching this point.
+# If enrollment is not complete, pal_init() will have already failed
+# (no device_name file), but callers should check explicitly.
 se_init "$CONTINUITY_REPO_DIR" "$CONTINUITY_DEVICE_NAME"
 ```
+
+### Path construction authority
+
+`$CONTINUITY_SAVES_ROOT` (the PAL variable) is authoritative for path construction, NOT the `saves_root` field in platform map JSON files. The path mapper uses `$CONTINUITY_SAVES_ROOT` for the saves root prefix and the JSON `system_paths` entries for system directory names only. If `saves_root` appears in a platform map JSON, it is informational — runtime path construction always reads the PAL variable.
 
 ### Pattern: Core modules reference PAL variables, never literals
 
