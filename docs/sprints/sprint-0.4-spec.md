@@ -1,6 +1,6 @@
 # Sprint 0.4 — Cold Start Sync
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.3 (complete — enrollment done, cloned repo exists, sync engine available: `se_pull`, `se_stage_files`, `se_commit`, `se_push`)
 
