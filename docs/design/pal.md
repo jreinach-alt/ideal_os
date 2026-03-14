@@ -260,7 +260,10 @@ pal_validate || exit 1
 
 . /path/to/src/core/path_mapper.sh
 . /path/to/src/core/sync_engine.sh
+. /path/to/src/core/change_detector.sh
 . /path/to/src/core/cold_start.sh
+. /path/to/src/core/boot_pull.sh
+. /path/to/src/core/runtime_poll.sh
 
 # Now call core functions — they use PAL variables/functions transparently
 pm_load_platform_map "$(pal_get_platform_map)"

@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-03-12
-**Last updated:** 2026-03-14 (Sprint 0.4 complete)
+**Last updated:** 2026-03-14 (Sprint 0.6 complete)
 
 ## Overview
 
@@ -128,7 +128,31 @@ Handles first-time sync when a device has never synced before (no sentinel file 
 
 Conflict notification uses the optional PAL hook `pal_on_conflict()` if the platform defines it.
 
-#### 5. Conflict Handler *(Sprint 0.8 — not yet implemented)*
+#### 5. Boot Pull (`src/core/boot_pull.sh`)
+
+Handles normal boot when a sentinel exists and the device had a clean prior session. Provides two functions:
+
+- **`bp_run(repo_dir)`** — Pulls latest from remote, diffs `HEAD` against `last_known_commit` to identify changed saves, copies only changed remote saves to the device, updates `last_known_commit`. Returns 0 on success, 1 on error.
+- **`bp_has_remote_changes(repo_dir)`** — Checks whether remote HEAD differs from stored `last_known_commit`. Returns 0 if changes exist, 1 if up to date.
+
+Boot pull is a read-from-remote operation only — it does not scan for local changes. That's the runtime poll's job.
+
+#### 6. Runtime Poll (`src/core/runtime_poll.sh`)
+
+Implements one complete poll cycle for detecting and syncing device save changes during active play. Designed to be called repeatedly by a daemon loop (Sprint 1.1). Has no internal state between calls — all state is on the filesystem (sentinel mtime, repo working tree).
+
+Provides four functions:
+
+- **`rp_find_candidates(repo_dir)`** — Uses `find -newer` against the sentinel file to enumerate `.srm` files under `$CONTINUITY_SAVES_ROOT` with newer mtime. Returns absolute device paths.
+- **`rp_confirm_changes(repo_dir, candidates)`** — Filters candidates via `cmp -s` against the repo working tree copy. Only files that actually differ byte-for-byte are confirmed. This eliminates FAT32 false positives (files whose mtime changed but content is identical).
+- **`rp_update_sentinel(repo_dir)`** — `touch`es the sentinel to advance its mtime, establishing the baseline for the next `find -newer` scan.
+- **`rp_run(repo_dir)`** — Orchestrates one complete cycle: find candidates → confirm changes → copy to repo → stage → commit → push (if online) → update `last_known_commit` → update sentinel. Returns 0 on success or nothing-to-do, 1 on error.
+
+**Two-stage detection** (`find -newer` + `cmp -s`) is intentional: `find -newer` is fast but imprecise on FAT32 (2-second mtime granularity can produce false positives). `cmp -s` is precise but slower. The two-stage approach gives us the speed of mtime scanning with the correctness of byte comparison.
+
+**Sentinel update rules:** The sentinel is updated after any scan that did work (even if all candidates were false positives), but NOT when no candidates were found (step 2 early return). This prevents the sentinel from advancing past changes that arrived at the mtime boundary.
+
+#### 7. Conflict Handler *(Sprint 0.8 — not yet implemented)*
 
 `src/core/conflict_handler.sh` will handle runtime merge conflicts (when `git pull` detects diverged `.srm` files). Planned behavior:
 
@@ -155,7 +179,7 @@ When `git pull` detects a merge conflict on an `.srm` file:
 
 Resolution: User picks one (or the platform client auto-resolves by "keep newest" if configured). The `.local` and `.conflict` files are removed after resolution.
 
-#### 6. Connectivity Checking
+#### 8. Connectivity Checking
 
 Network connectivity is checked via the PAL function `pal_is_online()`. Each platform implements this according to its capabilities:
 
@@ -168,7 +192,7 @@ If offline:
 - Push attempts resume when connectivity returns
 - Pull happens on next boot or next connectivity event
 
-#### 7. Enrollment (`src/core/enrollment.sh`)
+#### 9. Enrollment (`src/core/enrollment.sh`)
 
 Device setup and credential management. Two paths:
 

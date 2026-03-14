@@ -134,7 +134,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.6 — Runtime Poll
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Implement runtime change detection (`src/core/runtime_poll.sh`) — `find -newer` sentinel + `cmp -s` candidates
