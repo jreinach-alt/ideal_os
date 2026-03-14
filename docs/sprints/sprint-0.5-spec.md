@@ -1,6 +1,6 @@
 # Sprint 0.5 — Boot Pull
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.4 (cold start — sentinel file and stored commit hash must be established before boot pull runs)
 
