@@ -1,6 +1,6 @@
 # Sprint 0.2 — Platform Abstraction Layer and Path Mapper
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.1 (complete — taxonomy, platform maps, test harness)
 
