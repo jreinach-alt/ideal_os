@@ -85,7 +85,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.4 — Cold Start Sync
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Implement cold start sync flow (`src/core/cold_start.sh`) — first run with no prior state (no sentinel, no stored commit)
