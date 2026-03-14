@@ -99,6 +99,9 @@ Implements the full cold start sync flow and the sentinel/commit-hash lifecycle.
                 "local_device": "$CONTINUITY_DEVICE_NAME",
                 "timestamp": "<current ISO 8601 from date -u>",
                 "source": "cold_start"}
+           — Accumulate both artifact paths for staging in step 6:
+             Append "$conflict_name" and "$repo_path.conflict" to conflict_files
+             (newline-delimited variable, initialized empty before step 4).
            pal_log "warn" "Cold start: conflict on $repo_path — device version preserved as $conflict_name"
            — (optional hook) pal_on_conflict "$repo_path" if function is defined
       e. Else (cmp -s returns 0 — files identical):
@@ -117,6 +120,13 @@ Implements the full cold start sync flow and the sentinel/commit-hash lifecycle.
 
 6.  Detect and stage all changes:
       changed=$(cd_detect_changes "$repo_dir")
+      — cd_detect_changes returns only .srm files. Conflict artifacts
+        (.local and .conflict files created in step 4d) are NOT .srm files,
+        so they must be appended separately. cs_run accumulates conflict
+        artifact paths in a variable (conflict_files) during step 4d.
+      If conflict_files is non-empty:
+        changed="$changed
+$conflict_files"         # Append conflict artifacts to the change list
       If changed is non-empty:
         se_stage_files "$repo_dir" "$changed"
 
@@ -180,6 +190,7 @@ If `pal_on_conflict` is defined as a function (check with `command -v pal_on_con
 
 - `cold_start.sh` sources `change_detector.sh` if `cd_list_repo_saves` is not already defined. Recommended pattern: check `command -v cd_list_repo_saves >/dev/null 2>&1 || . "$(dirname "$0")/../core/change_detector.sh"`. However, the preferred approach for the test harness is to source both files explicitly before calling `cs_run`. Specify this in the module header comment.
 - All `local` variable declarations use the BusyBox-compatible split pattern: `local var; var=$(cmd)`.
+- **Conflict artifact staging:** `cd_detect_changes` filters to `.srm` files only, so `.local` and `.conflict` files created during step 4d will NOT appear in its output. `cs_run` must track conflict artifacts separately in a `conflict_files` variable (newline-delimited, initialized empty before step 4). In step 6, append `conflict_files` to `changed` before calling `se_stage_files`. This keeps `cd_detect_changes` clean for its reuse in Sprint 0.6 (runtime poll), where `.srm`-only filtering is correct.
 - The two nested loops (repo saves and device saves) iterate over newline-delimited strings using a `while IFS= read -r line` pattern fed from a subshell: `cd_list_repo_saves "$repo_dir" | while IFS= read -r repo_path; do ... done`. Since this runs in a subshell, any variables set inside the loop are not visible outside. Use temp files to accumulate counts or state if needed for logging.
 - `cmp -s` is used for byte comparison throughout — no mtime dependency, works correctly on FAT32.
 - Device name is read from `$CONTINUITY_DEVICE_NAME` (set by PAL). Never hardcoded.
