@@ -68,7 +68,7 @@
 
 ## Deviations from Spec
 
-1. **Step 5 `cs_store_commit` call also on offline path.** The spec's Step 5 says "if online, pushes and updates `last_known_commit`" and "if offline, logs that the commit is queued locally and updates `last_known_commit`." The implementation updates `last_known_commit` in both cases (after the commit, regardless of push outcome), which matches the spec's intent — the local HEAD advanced whether or not the push succeeded.
+None. On re-examination, the Step 5 `cs_store_commit` call is outside the `If pal_is_online` guard in the spec pseudocode (line 132–133, same indentation as `se_commit` on line 126). The implementation matches exactly: `cs_store_commit` runs unconditionally after the commit, regardless of whether the push happened. No deviation.
 
 ## Open Items
 
