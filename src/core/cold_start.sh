@@ -22,8 +22,13 @@ cs_store_commit() {
     local repo_dir commit_hash
     repo_dir="$1"
     commit_hash="$2"
-    mkdir -p "$repo_dir/.continuity"
-    printf '%s\n' "$commit_hash" > "$repo_dir/.continuity/last_known_commit"
+    if ! mkdir -p "$repo_dir/.continuity"; then
+        return 1
+    fi
+    if ! printf '%s\n' "$commit_hash" > "$repo_dir/.continuity/last_known_commit"; then
+        return 1
+    fi
+    return 0
 }
 
 # cs_read_commit — read stored commit hash
@@ -47,8 +52,13 @@ cs_read_commit() {
 cs_create_sentinel() {
     local repo_dir
     repo_dir="$1"
-    mkdir -p "$repo_dir/.continuity"
-    date '+%Y-%m-%dT%H:%M:%S' > "$repo_dir/.continuity/sentinel"
+    if ! mkdir -p "$repo_dir/.continuity"; then
+        return 1
+    fi
+    if ! date '+%Y-%m-%dT%H:%M:%S' > "$repo_dir/.continuity/sentinel"; then
+        return 1
+    fi
+    return 0
 }
 
 # cs_run — execute the full cold start sync flow

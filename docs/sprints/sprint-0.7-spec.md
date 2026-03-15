@@ -62,6 +62,9 @@ sb_run(repo_dir):
          — If se_push returns 1 (persistent failure):
              pal_log "warn" "Stale boot: push of interrupted session commits failed — continuing"
              — Do not abort. The local commits exist; push can retry later.
+         — If se_push returns 2 (offline — race between pal_is_online check and push):
+             pal_log "warn" "Stale boot: went offline during push of interrupted session — continuing"
+             — Do not abort. Treat same as push failure; local commits survive.
          — If se_push returns 0:
              pal_log "info" "Stale boot: pushed commits from interrupted session"
      — If offline or no unpushed commits: skip silently.
