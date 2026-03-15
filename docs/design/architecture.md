@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-03-12
-**Last updated:** 2026-03-15 (Sprint 0.9 complete)
+**Last updated:** 2026-03-15 (Sprint 0.10 complete)
 
 ## Overview
 
@@ -423,6 +423,51 @@ Defined keys: `file`, `system`, `game`, `remote_device`, `remote_timestamp`, `lo
 #### Sync Pipeline Safety
 
 `rp_confirm_changes` checks `ch_is_trying` for each candidate file. Files in trying state are excluded from the entire copy → stage → commit → push pipeline, preventing accidental promotion of test copies.
+
+---
+
+## Sync Notifications (Sprint 0.10)
+
+### Design: Listener, Not Poller
+
+The sync pipeline already knows what happened at every decision point. Rather than a separate module querying state after the fact, the pipeline announces results through a single notification helper: `ss_notify`.
+
+### Notification Flow
+
+```
+rp_run / bp_run / cs_run
+        │
+        ▼
+   ss_notify(repo_dir, level, message)
+        │
+        ├── writes .continuity/last_status (atomic)
+        ├── calls pal_on_sync_result(level, message) if defined
+        └── logs via pal_log
+```
+
+### Notification Levels
+
+| Level | Meaning | Examples |
+|-------|---------|---------|
+| `green` | Save pushed to remote | "Pushed 1 save(s)" |
+| `yellow` | Committed locally, offline | "1 save(s) queued — offline" |
+| `red` | Action required | "2 conflict(s) — action required", "Save modified during try — action required" |
+
+### Silence by Default
+
+No notification fires when nothing happens. A poll cycle that detects no changes, or a boot pull with no new commits, produces no notification. Silence means normal.
+
+### Last-Status File
+
+`$repo_dir/.continuity/last_status` stores the most recent notification in key-value format:
+
+```
+level=green
+message=Pushed 1 save(s)
+timestamp=2026-03-15T14:30:00Z
+```
+
+Queryable via `ss_get_last_status`. Used by tool PAKs and status screens to show "last sync: 2 minutes ago."
 
 ---
 

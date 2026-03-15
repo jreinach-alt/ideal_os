@@ -12,7 +12,8 @@
 #   sync_engine: se_stage_files(), se_commit(), se_push(), se_get_head_commit()
 #   change_detector: cd_detect_changes()
 #   cold_start: cs_store_commit()
-#   conflict_handler: ch_is_trying()
+#   conflict_handler: ch_is_trying(), ch_is_trying_modified()
+#   sync_status: ss_notify()
 
 # rp_find_candidates — find .srm files newer than the sentinel
 # Usage: rp_find_candidates <repo_dir>
@@ -52,6 +53,11 @@ rp_confirm_changes() {
 
         # Skip files in trying state (Sprint 0.9 safety gate)
         if command -v ch_is_trying >/dev/null 2>&1 && ch_is_trying "$repo_dir" "$repo_path"; then
+            if command -v ch_is_trying_modified >/dev/null 2>&1 && ch_is_trying_modified "$repo_dir" "$repo_path"; then
+                if command -v ss_notify >/dev/null 2>&1; then
+                    ss_notify "$repo_dir" "red" "Save modified during try — action required"
+                fi
+            fi
             pal_log "info" "Poll confirm: skipping trying-state file: $repo_path"
             continue
         fi
@@ -139,6 +145,9 @@ rp_run() {
     cp_failure=$(cat "$cp_fail_tmp")
     rm -f "$cp_fail_tmp"
     if [ -n "$cp_failure" ]; then
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "red" "Sync error — check logs"
+        fi
         return 1
     fi
 
@@ -154,13 +163,23 @@ rp_run() {
     # Step 6: Stage and commit
     if ! se_stage_files "$repo_dir" "$changed_in_repo"; then
         pal_log "error" "Poll: failed to stage files"
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "red" "Sync error — check logs"
+        fi
         return 1
     fi
 
     if ! se_commit "$repo_dir" "$changed_in_repo"; then
         pal_log "error" "Poll: failed to commit"
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "red" "Sync error — check logs"
+        fi
         return 1
     fi
+
+    # Compute save count before push block (PF-2)
+    local save_count
+    save_count=$(printf '%s\n' "$changed_in_repo" | grep -c '.')
 
     # Step 7: Push if online
     if pal_is_online; then
@@ -169,12 +188,25 @@ rp_run() {
         se_push "$repo_dir" || push_rc=$?
         if [ "$push_rc" -eq 1 ]; then
             pal_log "error" "Poll: push failed"
+            if command -v ss_notify >/dev/null 2>&1; then
+                ss_notify "$repo_dir" "red" "Push failed — check credentials"
+            fi
             return 1
         elif [ "$push_rc" -eq 2 ]; then
             pal_log "warn" "Poll: push deferred unexpectedly"
+            if command -v ss_notify >/dev/null 2>&1; then
+                ss_notify "$repo_dir" "yellow" "$save_count save(s) queued — offline"
+            fi
+        else
+            if command -v ss_notify >/dev/null 2>&1; then
+                ss_notify "$repo_dir" "green" "Pushed $save_count save(s)"
+            fi
         fi
     else
         pal_log "info" "Poll: offline — commit queued locally"
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "yellow" "$save_count save(s) queued — offline"
+        fi
     fi
 
     # Step 8: Store commit hash

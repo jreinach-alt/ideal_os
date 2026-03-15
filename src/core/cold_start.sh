@@ -244,6 +244,9 @@ $conflict_files"
                 was_offline=true
             elif [ "$push_rc" -eq 1 ]; then
                 pal_log "error" "Cold start: push failed"
+                if command -v ss_notify >/dev/null 2>&1; then
+                    ss_notify "$repo_dir" "red" "Push failed — check credentials"
+                fi
                 return 1
             fi
         else
@@ -267,9 +270,17 @@ $conflict_files"
         fi
     else
         pal_log "info" "Cold start: offline — sentinel deferred until next boot with connectivity"
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "yellow" "Initial sync — push pending"
+        fi
     fi
 
     # Step 10: Done
     pal_log "info" "Cold start complete"
+    if [ "$was_offline" != "true" ]; then
+        if command -v ss_notify >/dev/null 2>&1; then
+            ss_notify "$repo_dir" "green" "Initial sync complete"
+        fi
+    fi
     return 0
 }

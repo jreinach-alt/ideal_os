@@ -87,6 +87,24 @@ Every PAL implementation must set these variables before `pal_init()` returns:
 |----------|-----------|---------|-------------|
 | `pal_on_sync_complete` | `()` | void | Hook called after a successful sync cycle. Platform can use this for notifications, UI updates, etc. *Not yet called by core modules — planned for Sprint 1.1 daemon lifecycle.* |
 | `pal_on_conflict` | `(canonical_repo_path)` | void | Hook called when a conflict `.local` file is created. Receives the canonical `.srm` repo path (e.g., `gba/minish_cap.srm`), not the `.local` file path. Platform can notify the user. |
+| `pal_on_sync_result` | `(level, message)` | void | Hook called when a sync operation completes with a meaningful outcome. `level` is `green` (pushed), `yellow` (committed but offline), or `red` (action required). `message` is human-readable display text — platforms must NOT parse it. Called by `ss_notify` in `sync_status.sh`. See the notification behavior contract below. |
+
+### Notification Behavior Contract
+
+Platforms implementing `pal_on_sync_result` should follow these display rules:
+
+| Level | Appearance | Duration | Dismissal |
+|-------|-----------|----------|-----------|
+| `green` | Small, subtle | 2-3 seconds, then fade | Auto-dismiss |
+| `yellow` | Small, noticeable | 3-4 seconds, then fade | Auto-dismiss |
+| `red` | Prominent | Persistent | User must resolve the condition or explicitly dismiss |
+
+**Key rules:**
+- `green` and `yellow` are transient — they appear briefly and disappear automatically.
+- `red` is persistent — stays visible until the user addresses the underlying issue (e.g., resolves a conflict).
+- Platforms branch on `level` only. The `message` string is for the user to read, not for platform logic to parse.
+- If the platform needs structured data (e.g., conflict count), it calls `ch_count_conflicts` directly.
+- Core re-fires `red` on every poll cycle where the condition persists. Platforms may debounce if needed.
 
 ---
 

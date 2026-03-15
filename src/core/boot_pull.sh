@@ -111,7 +111,15 @@ bp_run() {
     elif [ "$pull_rc" -eq 1 ]; then
         if ! ch_handle_pull_conflict "$repo_dir"; then
             pal_log "error" "Boot pull: conflict handler failed"
+            if command -v ss_notify >/dev/null 2>&1; then
+                ss_notify "$repo_dir" "red" "Sync error — conflict handler failed"
+            fi
             return 1
+        fi
+        if command -v ss_notify >/dev/null 2>&1; then
+            local conflict_count
+            conflict_count=$(ch_count_conflicts "$repo_dir")
+            ss_notify "$repo_dir" "red" "$conflict_count conflict(s) — action required"
         fi
         return 0
     fi
