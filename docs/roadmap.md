@@ -156,7 +156,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.7 — Stale Boot Recovery
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Handle stale boot (`src/core/stale_boot.sh`) — sentinel exists but may be outdated (crash, unclean shutdown)
