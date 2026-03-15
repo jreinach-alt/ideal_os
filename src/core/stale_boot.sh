@@ -104,8 +104,10 @@ sb_run() {
     if [ "$pull_rc" -eq 2 ]; then
         pal_log "warn" "Stale boot: offline — pull skipped, proceeding with local repo state"
     elif [ "$pull_rc" -eq 1 ]; then
-        pal_log "warn" "Stale boot: diverged history — conflict handler required (Sprint 0.8)"
-        return 1
+        if ! ch_handle_pull_conflict "$repo_dir"; then
+            pal_log "error" "Stale boot: conflict handler failed"
+            return 1
+        fi
     fi
 
     local new_commit

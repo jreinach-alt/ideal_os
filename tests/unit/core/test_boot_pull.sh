@@ -110,6 +110,7 @@ pal_init
 . "$PROJECT_ROOT/src/core/path_mapper.sh"
 . "$PROJECT_ROOT/src/core/cold_start.sh"
 . "$PROJECT_ROOT/src/core/boot_pull.sh"
+. "$PROJECT_ROOT/src/core/conflict_handler.sh"
 
 pal_validate
 
@@ -450,7 +451,7 @@ assert_eq "bp_run network error: commit unchanged" "$old_stored" "$new_stored"
 # Restore real se_pull
 . "$PROJECT_ROOT/src/core/sync_engine.sh"
 
-# Test: diverged (se_pull returns 1)
+# Test: diverged (se_pull returns 1) — conflict handler called
 env_out=$(setup_boot_pull_env "run6")
 repo_dir=$(printf '%s' "$env_out" | cut -d' ' -f3)
 
@@ -458,20 +459,24 @@ saves_dir="$TEST_TMPDIR/run6_saves"
 CONTINUITY_SAVES_ROOT="$saves_dir"
 mkdir -p "$saves_dir"
 
-old_stored=$(cs_read_commit "$repo_dir")
-
-# Override se_pull to return 1
+# Override se_pull to return 1 and stub ch_handle_pull_conflict to succeed
 se_pull() { return 1; }
+ch_handle_pull_conflict() { return 0; }
 
 rc=0
 bp_run "$repo_dir" >/dev/null 2>&1 || rc=$?
-assert_rc "bp_run diverged returns 1" 1 "$rc"
+assert_rc "bp_run diverged calls conflict handler, returns 0" 0 "$rc"
 
-new_stored=$(cs_read_commit "$repo_dir")
-assert_eq "bp_run diverged: commit unchanged" "$old_stored" "$new_stored"
+# Test: diverged with conflict handler failure → returns 1
+ch_handle_pull_conflict() { return 1; }
 
-# Restore real se_pull
+rc=0
+bp_run "$repo_dir" >/dev/null 2>&1 || rc=$?
+assert_rc "bp_run diverged conflict handler fail returns 1" 1 "$rc"
+
+# Restore
 . "$PROJECT_ROOT/src/core/sync_engine.sh"
+. "$PROJECT_ROOT/src/core/conflict_handler.sh"
 
 # Test: apply failure → returns 1, commit not updated
 env_out=$(setup_boot_pull_env "run7")

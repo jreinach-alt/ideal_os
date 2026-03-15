@@ -109,8 +109,11 @@ bp_run() {
         pal_log "warn" "Boot pull skipped — network unavailable"
         return 2
     elif [ "$pull_rc" -eq 1 ]; then
-        pal_log "warn" "Boot pull deferred — diverged history, conflict handler required"
-        return 1
+        if ! ch_handle_pull_conflict "$repo_dir"; then
+            pal_log "error" "Boot pull: conflict handler failed"
+            return 1
+        fi
+        return 0
     fi
 
     # Step 3: Get new HEAD

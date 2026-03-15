@@ -101,6 +101,7 @@ pal_init
 . "$PROJECT_ROOT/src/core/cold_start.sh"
 . "$PROJECT_ROOT/src/core/boot_pull.sh"
 . "$PROJECT_ROOT/src/core/runtime_poll.sh"
+. "$PROJECT_ROOT/src/core/conflict_handler.sh"
 . "$PROJECT_ROOT/src/core/stale_boot.sh"
 
 pal_validate
@@ -438,22 +439,27 @@ assert_eq "run no-op: no new commit" "$commit_before" "$commit_after"
 assert_file_exists "run no-op: sentinel updated" "$_SE_REPO/.continuity/sentinel"
 
 # ============================
-# Test sb_run — Diverged remote
+# Test sb_run — Diverged remote — conflict handler called
 # ============================
 setup_stale_env "run8"
 
 se_pull() { return 1; }
-
-commit_before=$("$CONTINUITY_GIT_BIN" -C "$_SE_REPO" rev-parse HEAD)
+ch_handle_pull_conflict() { return 0; }
 
 rc=0; sb_run "$_SE_REPO" >/dev/null 2>&1 || rc=$?
-assert_rc "run diverged: returns 1" 1 "$rc"
+assert_rc "run diverged: conflict handler called, returns 0" 0 "$rc"
 
-commit_after=$("$CONTINUITY_GIT_BIN" -C "$_SE_REPO" rev-parse HEAD)
-assert_eq "run diverged: no new commit" "$commit_before" "$commit_after"
+# Test: diverged with conflict handler failure → returns 1
+setup_stale_env "run8b"
+se_pull() { return 1; }
+ch_handle_pull_conflict() { return 1; }
+
+rc=0; sb_run "$_SE_REPO" >/dev/null 2>&1 || rc=$?
+assert_rc "run diverged conflict handler fail: returns 1" 1 "$rc"
 
 # Restore
 . "$PROJECT_ROOT/src/core/sync_engine.sh"
+. "$PROJECT_ROOT/src/core/conflict_handler.sh"
 se_init "$_SE_REPO" "test-device"
 
 # ============================
@@ -520,17 +526,19 @@ setup_stale_env "run12"
 sb_mark_clean_shutdown "$_SE_REPO"
 # Now make it stale again by removing the marker check
 # Actually, sb_run doesn't check sb_is_stale — it just clears the marker.
-# Set up to fail on diverged pull
+# Set up to fail on diverged pull with conflict handler failure
 se_pull() { return 1; }
+ch_handle_pull_conflict() { return 1; }
 
 rc=0; sb_run "$_SE_REPO" >/dev/null 2>&1 || rc=$?
-assert_rc "run marker cleared on fail: returns 1 (diverged)" 1 "$rc"
+assert_rc "run marker cleared on fail: returns 1 (conflict handler fail)" 1 "$rc"
 
 # The clean_shutdown marker must be gone (cleared as first step)
 assert_file_not_exists "run marker cleared on fail: marker removed" "$_SE_REPO/.continuity/clean_shutdown"
 
 # Restore
 . "$PROJECT_ROOT/src/core/sync_engine.sh"
+. "$PROJECT_ROOT/src/core/conflict_handler.sh"
 se_init "$_SE_REPO" "test-device"
 
 # --- Summary ---
