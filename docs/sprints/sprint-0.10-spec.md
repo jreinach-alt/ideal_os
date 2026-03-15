@@ -216,10 +216,12 @@ ss_notify "$repo_dir" "yellow" "$save_count save(s) queued — offline"
 ss_notify "$repo_dir" "red" "Push failed — check credentials"
 ```
 
-**After any error return (existing `return 1` paths):**
+**After post-copy error returns (Steps 4, 6 — per PF-1):**
 ```sh
 ss_notify "$repo_dir" "red" "Sync error — check logs"
 ```
+
+Note: only errors after Step 4 fire red. Step 1 (sentinel missing) and Steps 8-9 (store commit/sentinel) do NOT fire red — see PF-1 for rationale.
 
 **NOT called when:**
 - No candidates found (Step 2 early return) — silent
@@ -333,11 +335,18 @@ Platforms implement `pal_on_sync_result` according to these rules:
 
 | File | Change |
 |------|--------|
-| `src/core/runtime_poll.sh` | Add `ss_notify` calls after push success, offline, and error. Add trying-modified notification in `rp_confirm_changes`. |
-| `src/core/boot_pull.sh` | Add `ss_notify` call after diverged pull. |
-| `src/core/cold_start.sh` | Add `ss_notify` calls after initial sync outcomes. |
+| `src/core/runtime_poll.sh` | Add `ss_notify` calls after push success, offline, and error (post-Step-4 errors only, per PF-1). Compute `save_count` before push block (PF-2). Add trying-modified sub-check + red notification in `rp_confirm_changes` (PF-5). |
+| `src/core/boot_pull.sh` | Add `ss_notify` red after both conflict handler success and failure paths (PF-3). |
+| `src/core/cold_start.sh` | Add `ss_notify` calls after initial sync outcomes: green on success, yellow on offline, red on push failure (PF-6). Silent on nothing-to-commit. |
 | `docs/design/pal.md` | Add `pal_on_sync_result` to PAL interface as optional hook. Document notification behavior contract. |
 | `docs/design/architecture.md` | Add Sync Notifications section. |
+
+### Files Created at Runtime (in user's save repo)
+
+| File | Created by | Purpose |
+|------|-----------|---------|
+| `$repo_dir/.continuity/.gitignore` | `ss_notify` (if absent) | Ignores `sentinel`, `last_known_commit`, `last_status` from git (PF-4). Committed to repo so it propagates to all clones. |
+| `$repo_dir/.continuity/last_status` | `ss_notify` | Last notification level/message/timestamp. Gitignored. |
 
 ---
 
@@ -373,13 +382,15 @@ Platforms implement `pal_on_sync_result` according to these rules:
 
 ### Call Sites — `bp_run`
 
-17. After diverged pull (conflicts created): `pal_on_sync_result` called with `red` and message containing conflict count.
+17. After diverged pull (conflicts created, handler succeeds): `pal_on_sync_result` called with `red` and message containing conflict count.
+17a. After diverged pull (conflict handler fails): `pal_on_sync_result` called with `red` and error message.
 18. After successful fast-forward pull: `pal_on_sync_result` is NOT called.
 
 ### Call Sites — `cs_run`
 
 19. After initial sync + push: `pal_on_sync_result` called with `green`.
 20. After initial sync, push offline: `pal_on_sync_result` called with `yellow`.
+20a. After initial sync, push failure: `pal_on_sync_result` called with `red`.
 
 ### PAL Contract
 
@@ -390,6 +401,8 @@ Platforms implement `pal_on_sync_result` according to these rules:
 ### `.gitignore`
 
 24. Last-status file (`last_status`) is not committed to git.
+24a. `ss_notify` creates `$repo_dir/.continuity/.gitignore` (ignoring `sentinel`, `last_known_commit`, `last_status`) if it doesn't exist.
+24b. The `.gitignore` itself IS committed (so it propagates to all clones).
 
 ### Code Quality
 
@@ -466,7 +479,8 @@ Platforms implement `pal_on_sync_result` according to these rules:
 - [ ] `rp_confirm_changes` modified — `ss_notify` red on trying-modified detection.
 - [ ] `bp_run` modified — `ss_notify` red on diverged pull.
 - [ ] `cs_run` modified — `ss_notify` on initial sync outcomes.
-- [ ] Last-status file gitignored.
+- [ ] Last-status file gitignored via `$repo_dir/.continuity/.gitignore`.
+- [ ] `.continuity/.gitignore` also covers `sentinel` and `last_known_commit`.
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] All unit tests pass under `busybox ash`.
@@ -482,3 +496,89 @@ Platforms implement `pal_on_sync_result` according to these rules:
 2. **Message is opaque display text.** Platforms must NOT parse the message string. Branch only on `level` (green/yellow/red). The message is for the user to read. If platforms need structured data (e.g., conflict count), they call Sprint 0.9's `ch_count_conflicts` directly.
 
 3. **No device JSON updates.** This module is a listener, not a state manager. It does not update `last_sync`/`last_push` in the device JSON. Those fields are the responsibility of whatever module owns device registration state. The last-status file is the only persistent artifact this sprint writes, and it exists solely so the Tool PAK can answer "what was the last notification?" at query time.
+
+---
+
+## Preflight Resolutions
+
+These findings were identified during the Sprint 0.10 preflight check and resolved here.
+
+### PF-1: Red notifications on `rp_run` error paths — which ones?
+
+The spec says "After any error return (existing `return 1` paths)" should call `ss_notify`. But `rp_run` has several early-exit `return 1` paths:
+
+- **Step 1 (line 93):** Sentinel missing — cold start incomplete. This is a pre-condition failure, not a sync error. The user hasn't done anything yet.
+- **Step 4 (line 142):** Copy failed — a file couldn't be written to the repo working tree.
+- **Step 6 (lines 157, 162):** Stage or commit failed — git operations failed after files were copied.
+- **Step 7 (line 172):** Push failed — auth error or repo gone.
+- **Step 8 (line 185):** Store commit hash failed — can't write to `.continuity/last_known_commit`.
+- **Step 9 (line 191):** Update sentinel failed — can't touch sentinel file.
+
+**Resolution:** Only fire `ss_notify "red"` for errors after Step 5 (post-copy, where the user's data is involved). Specifically:
+
+| Path | Notify? | Rationale |
+|------|---------|-----------|
+| Sentinel missing (Step 1) | No | Pre-condition. User needs cold start, not sync notification. |
+| Copy failed (Step 4) | Yes | User's save couldn't be synced. |
+| Stage/commit failed (Step 6) | Yes | Git is broken. |
+| Push failed (Step 7) | Yes | Already handled — `ss_notify "red" "Push failed"`. |
+| Store commit / sentinel (Steps 8-9) | No | Post-push bookkeeping. Save is already safe on remote. |
+
+### PF-2: Two yellow notification locations in `rp_run`
+
+The spec's yellow notifications cover two code paths that need separate `ss_notify` calls:
+
+1. **`pal_is_online` returns false (line 176-177):** Push was never attempted. Message: `"$save_count save(s) queued — offline"`.
+2. **`push_rc=2` (line 173-174):** Push was attempted but got a network error. Message: `"$save_count save(s) queued — offline"`.
+
+Both use the same level and similar messages. The `save_count` variable must be computed before Step 7 (the push block) so it's available in both branches.
+
+**Resolution:** Compute `save_count` before the push block. Both paths call `ss_notify "$repo_dir" "yellow" "$save_count save(s) queued — offline"`.
+
+### PF-3: `bp_run` notification placement and failure path
+
+The spec says notification after "diverged pull (conflict handler invoked)." In `bp_run`, `se_pull` returns 1 when diverged (line 107), then `ch_handle_pull_conflict` is called (line 112). Two outcomes:
+
+1. `ch_handle_pull_conflict` succeeds → `return 0` (line 116). **Insert `ss_notify "red"` here.**
+2. `ch_handle_pull_conflict` fails → `return 1` (line 114). Should this also notify?
+
+**Resolution:** Yes, both paths get red. On success: `"$conflict_count conflict(s) — action required"`. On failure: `"Sync error — conflict handler failed"`. The failure path is arguably more urgent — the user has conflicts AND the handler couldn't process them.
+
+### PF-4: `.continuity/.gitignore` for `last_status`
+
+The `last_status` file lives at `$repo_dir/.continuity/last_status`. Currently, there is NO `.gitignore` in the `.continuity/` directory. The existing `sentinel` and `last_known_commit` files are also not gitignored — they avoid being committed because the sync engine only stages files via `se_stage_files` with explicit paths (never `git add .`), so `.continuity/` contents are untracked but not ignored.
+
+**Resolution:** Create `$repo_dir/.continuity/.gitignore` in `ss_notify` (if it doesn't exist) to ignore local-only state files:
+
+```
+sentinel
+last_known_commit
+last_status
+```
+
+This is the right fix — even though the current code avoids committing these by never running `git add .`, an explicit `.gitignore` is a safety net. The `.gitignore` itself IS committed (so it propagates to all clones). `ss_notify` creates it on first call if missing.
+
+**Commit path:** `ss_notify` is called mid-flow (after `cd_detect_changes` in `rp_run`), so the newly created `.gitignore` won't be detected in the current sync cycle. It gets picked up by `cd_detect_changes` on the *next* cycle, staged, and committed alongside any save changes. This is acceptable — the `.gitignore` is a safety net, not urgent. First-cycle timing: on cold start, `cs_run` calls `ss_notify` at the end, so the `.gitignore` is committed on the first `rp_run` cycle.
+
+Add to the file table: `$repo_dir/.continuity/.gitignore` is created by `ss_notify` if absent.
+
+### PF-5: `rp_confirm_changes` trying-modified sub-check
+
+The spec (lines 269-276) shows `ch_is_trying_modified` being called inside `rp_confirm_changes`. The current code (Sprint 0.9) only calls `ch_is_trying` — it does not differentiate between trying-modified and trying-not-modified.
+
+**Resolution:** Sprint 0.10 expands the existing `ch_is_trying` branch in `rp_confirm_changes` to add the `ch_is_trying_modified` sub-check and fire `ss_notify "red"`. The file is still skipped regardless of modification state. The notification is only for the modified case.
+
+### PF-6: `cs_run` notification placement
+
+`cs_run` has three outcome paths after the commit:
+
+1. **Push succeeds** (line 238-248, `push_rc` not 1 or 2): green.
+2. **Push offline** (`was_offline=true`, line 249-250 or line 243-244): yellow.
+3. **Push fails** (`push_rc=1`, line 246-247): returns 1 — red.
+4. **Nothing to commit** (line 253): silent.
+
+**Resolution:**
+- Green: after Step 10 "Cold start complete" (line 273), only when `was_offline != true`.
+- Yellow: after "offline — sentinel deferred" (line 269).
+- Red: before `return 1` on push failure (line 247). But note: `cs_run` returns 1 here, and the caller should handle this. Since the cold start is the first-ever run, a push failure here means the user's save repo can't be reached — that's a setup error. Still fire red for consistency.
+- Silent: nothing to commit path (line 253).
