@@ -1,4 +1,4 @@
-# Sprint 0.9 — Local Conflict Resolution UI
+# Sprint 0.9 — On-Device Conflict Resolution UI
 
 **Status:** Draft
 **Date:** 2026-03-15
@@ -8,264 +8,317 @@
 
 ## Goal
 
-Give users a way to resolve save conflicts from the device itself, using their phone as the interaction surface. When a conflict exists (two versions of the same `.srm` file from different devices), the user can view both versions, swap one into the active save slot to try it in-game, and then mark their preferred version as authoritative — all without needing a second device or a PC.
+Give users a way to resolve save conflicts directly on the handheld, using the device's own screen and buttons. When a conflict exists (two versions of the same `.srm` file from different devices), the user opens the Continuity resolver from the Tools menu, sees both versions with device names and timestamps, can swap either version into the active save slot to try it in-game, then come back and mark the winner as authoritative.
 
-This is a rudimentary first-pass UI. Sprint 1.2 (NextUI Tool PAK) will build a richer on-device experience. This sprint provides the minimum viable mechanism: a BusyBox `httpd` server with shell CGI scripts and a single-page HTML interface served to the user's phone over the local network.
+No phone. No second device. No IP address to hunt for. The user is already holding the device.
 
-**Why the phone?** Constrained handhelds (TrimUI Brick, Anbernic) have no web browser. But they're on WiFi (required for sync), and the user's phone is always within reach. The phone provides a natural "second screen" for conflict management while the user tests saves on the handheld.
+This sprint builds a minimal compiled C binary using NextUI's SDL2 infrastructure, following the same pattern as existing Tool PAKs (`settings.elf`, `battery.elf`, etc.). The UI is deliberately minimal — a scrollable list with d-pad navigation and A/B button actions. Sprint 1.2 (full Tool PAK) will add sync status, manual sync trigger, and device management around this conflict resolution core.
 
 ---
 
 ## Reference Specs
 
-- `docs/design/pal.md` — PAL interface, `pal_is_online()`, `CONTINUITY_REPO_DIR`, `CONTINUITY_SAVES_ROOT`, `CONTINUITY_DEVICE_NAME`
-- `docs/design/architecture.md` — Conflict Resolution Strategy, BusyBox httpd reference (enrollment section uses port 8080)
-- `docs/design/security.md` — BusyBox httpd attack surface assessment
+- `docs/design/pal.md` — PAL interface, `CONTINUITY_REPO_DIR`, `CONTINUITY_SAVES_ROOT`, `CONTINUITY_DEVICE_NAME`
+- `docs/design/architecture.md` — Conflict Resolution Strategy section
 - `src/core/conflict_handler.sh` — `ch_list_conflicts`, `ch_list_local_files`, `ch_resolve` (Sprint 0.8 output)
 - `src/core/path_mapper.sh` — `pm_repo_to_local` (Sprint 0.2 output)
+- `upstream/nextui/src/workspace/all/common/api.h` — NextUI GFX/PAD API surface
+- `upstream/nextui/src/workspace/all/common/defines.h` — Constants, font sizes, button IDs
+- `upstream/nextui/src/workspace/all/settings/menu.hpp` — NextUI menu framework (reference, not dependency)
+- `upstream/nextui/src/workspace/tg5040/platform/platform.h` — TrimUI Brick platform constants
 
 ---
 
 ## Scope
 
-### Conflict Resolution Server (`src/core/conflict_ui/server.sh`)
+### Architecture Overview
 
-Manages the lifecycle of a BusyBox `httpd` instance that serves the conflict resolution UI. Designed to be called by platform daemons (Sprint 1.1) or manually by the user via a PAK (Sprint 1.2). The server is ephemeral — it starts when conflicts exist and stops when the user dismisses it or all conflicts are resolved.
+```
+┌──────────────────────────────────────────┐
+│ Continuity.pak/                           │
+│   launch.sh          ← entry point        │
+│   resolve.elf        ← compiled C binary  │
+│   resolve.sh         ← shell helper       │
+│   bin/git            ← bundled git        │
+│   config/            ← platform maps etc  │
+│   src/core/          ← bundled core shell │
+└──────────────────────────────────────────┘
+```
 
-**Functions:**
+The conflict resolver is a compiled C program (`resolve.elf`) that handles display and input via SDL2. It delegates all conflict logic (listing, trying, resolving) to shell helper functions via `system()` or `popen()` calls. This keeps the binary thin — it's a UI shell around the existing conflict handler.
 
-| Function | Signature | Returns | Description |
-|----------|-----------|---------|-------------|
-| `cui_start` | `(repo_dir, port)` | 0 on success, 1 on error | Generate httpd config, start BusyBox `httpd` in foreground mode (backgrounded by caller), write PID to `$repo_dir/.continuity/conflict_ui.pid`. Serves static files from the `www/` directory and routes `/cgi-bin/*` to CGI scripts. If `port` is empty, defaults to `8085`. |
-| `cui_stop` | `(repo_dir)` | 0 on success, 1 on error | Read PID from `$repo_dir/.continuity/conflict_ui.pid`, kill the process, remove the PID file. Idempotent — returns 0 if no server is running. |
-| `cui_is_running` | `(repo_dir)` | 0 if running, 1 if not | Check whether the PID file exists and the process is alive. |
-| `cui_get_url` | `(port)` | prints URL to stdout | Determine the device's LAN IP address and print `http://<ip>:<port>`. Uses `ip route` or `ifconfig` (BusyBox-compatible). Returns 1 if no LAN IP can be determined. |
-
-**Port selection:** Port `8085` (default) avoids conflict with enrollment httpd on port `8080` (architecture.md). The port is a parameter so platform entry points can override it if needed.
-
-**PID management:** The conflict UI PID file (`conflict_ui.pid`) is separate from the daemon's PID file (`continuity.pid`). They are independent processes.
+**Why C, not C++?** The NextUI settings app uses C++ with `<functional>`, `<vector>`, `<any>`, `<shared_mutex>` — heavy STL. Our binary is simpler (a scrollable list with actions) and doesn't need that machinery. C with the NextUI C API (`api.h`) keeps the binary small and the build simple. If linking against NextUI's shared libs requires C++ linkage, C++ is acceptable, but the implementation should stay procedural — no classes, no templates, no STL containers.
 
 ---
 
-### CGI Scripts
+### Conflict Resolver Binary (`src/platforms/nextui/resolve.c`)
 
-All CGI scripts are POSIX sh, BusyBox ash compatible. They read environment variables set by BusyBox httpd (`REQUEST_METHOD`, `QUERY_STRING`, `CONTENT_LENGTH`). They source the PAL and core modules to access conflict handler functions. Output is `Content-Type: application/json` for API endpoints.
+A single-file C program (~400–600 lines) that:
 
-**CGI environment bootstrap:**
+1. Scans the repo for `.conflict` files (reads the filesystem directly, no shell call needed)
+2. Parses `.conflict` JSON to extract metadata (simple hand-rolled parser — the format is fixed and tiny)
+3. Renders a scrollable list of conflicts
+4. Handles d-pad/button input for navigation and actions
+5. Delegates try/resolve operations to shell scripts via `system()`
 
-Each CGI script sources a shared bootstrap file (`cgi-bin/_bootstrap.sh`) that:
-1. Sets `CONTINUITY_REPO_DIR` from a config file written by `cui_start`
-2. Sources the PAL (test PAL or platform PAL, path written to the config file)
-3. Sources required core modules (`pal.sh`, `path_mapper.sh`, `sync_engine.sh`, `cold_start.sh`, `conflict_handler.sh`)
-4. Calls `pal_init` and `pal_validate`
+**Data structures:**
 
-The config file (`$repo_dir/.continuity/conflict_ui.conf`) is written by `cui_start` and contains:
+```c
+#define MAX_CONFLICTS 32
+#define MAX_PATH_LEN 256
+#define MAX_DEVICE_NAME 64
+
+typedef struct {
+    char file[MAX_PATH_LEN];           // canonical repo-relative .srm path
+    char remote_device[MAX_DEVICE_NAME];
+    char remote_timestamp[32];         // ISO-8601
+    char local_device[MAX_DEVICE_NAME];
+    char local_timestamp[32];          // ISO-8601
+    char system_name[32];              // derived from path (e.g., "snes")
+    char game_name[64];                // derived from path (e.g., "super_metroid")
+    int active_version;                // 0 = remote, 1 = local
+} ConflictEntry;
+
+typedef struct {
+    ConflictEntry entries[MAX_CONFLICTS];
+    int count;
+    int selected;                      // cursor position
+} ConflictList;
+```
+
+**Program flow:**
+
+```
+main():
+  1. Parse command-line args:
+       --repo-dir <path>    (required: CONTINUITY_REPO_DIR)
+       --saves-dir <path>   (required: CONTINUITY_SAVES_ROOT)
+       --device-name <name> (required: CONTINUITY_DEVICE_NAME)
+       --core-dir <path>    (required: path to src/core/)
+       --pal-path <path>    (required: path to pal_nextui.sh)
+
+  2. Scan repo for conflicts → populate ConflictList
+       Walk repo_dir recursively, find *.conflict files
+       For each: parse JSON, derive system/game from path
+       If count == 0: show "No conflicts" message, exit after 2s
+
+  3. Initialize SDL2 (GFX_init if linking NextUI, or direct SDL_Init)
+       SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK)
+       Open window/surface at device resolution
+       Load embedded font via SDL_ttf
+
+  4. Enter main loop:
+       while (running):
+         PAD_poll()  — or SDL_PollEvent for joystick/button
+         Handle input:
+           UP/DOWN  → move cursor
+           A        → open action submenu for selected conflict
+           B        → exit (back to Tools menu)
+         Render:
+           Header: "Save Conflicts (N)"
+           For each visible conflict:
+             "[system] game_name"
+             "  mine (device_name) — timestamp"
+             "  theirs (remote_device) — timestamp"
+             If active: "  ► testing: mine/theirs"
+           Footer: "A: Actions  B: Exit"
+         GFX_flip() / SDL_UpdateWindowSurface()
+
+  5. Cleanup and exit
+```
+
+**Action submenu (shown when A is pressed on a conflict):**
+
+```
+┌──────────────────────────┐
+│  Super Metroid            │
+│                           │
+│  ► Try Mine               │
+│    Try Theirs             │
+│    ──────                 │
+│    Keep Mine              │
+│    Keep Theirs            │
+│    Keep Newest            │
+│    ──────                 │
+│    Cancel                 │
+│                           │
+│  A: Select  B: Back       │
+└──────────────────────────┘
+```
+
+- **Try Mine / Try Theirs:** Copies the selected version to the device save path. Does NOT resolve the conflict. The user can exit the resolver, launch the game to test the save, then come back and resolve.
+- **Keep Mine / Keep Theirs / Keep Newest:** Calls `ch_resolve` via `system()`, then rescans the conflict list. Shows a brief "Resolved!" confirmation.
+- **Cancel:** Dismisses the submenu, returns to the conflict list.
+
+---
+
+### Shell Helper Script (`src/platforms/nextui/resolve.sh`)
+
+The binary calls this script via `system()` to perform conflict operations. This keeps all git/PAL logic in shell where it belongs, and the binary stays a pure UI layer.
+
 ```sh
-CONTINUITY_REPO_DIR="/path/to/repo"
-PAL_PATH="/path/to/pal_<platform>.sh"
-CORE_DIR="/path/to/src/core"
+#!/bin/sh
+# resolve.sh — shell helper for resolve.elf
+# Usage:
+#   resolve.sh try <repo_dir> <file> <version> <saves_root> <core_dir> <pal_path>
+#   resolve.sh resolve <repo_dir> <file> <resolution> <saves_root> <core_dir> <pal_path>
 ```
 
-#### `cgi-bin/conflicts.cgi` — List Conflicts
+**`resolve.sh try`:**
+1. Source PAL and core modules (conflict_handler.sh, path_mapper.sh)
+2. Determine device save path via `pm_repo_to_local "$file"`
+3. If `version` is `"local"`:
+   - Find the `.local` file in `$repo_dir/` matching `$file.*.local`
+   - Copy it to the device save path
+4. If `version` is `"remote"`:
+   - Copy `$repo_dir/$file` to the device save path
+5. Exit 0 on success, 1 on error
 
-**Method:** GET
+**`resolve.sh resolve`:**
+1. Source PAL and core modules
+2. Call `ch_resolve "$repo_dir" "$file" "$resolution"`
+3. If successful, copy the resolved canonical file to the device save path
+4. Exit with `ch_resolve`'s return code
 
-**Response:** JSON array of conflict objects.
-
-```json
-{
-  "conflicts": [
-    {
-      "file": "snes/super_metroid.srm",
-      "remote_device": "my-deck",
-      "remote_timestamp": "2026-03-12T13:00:00Z",
-      "local_device": "my-brick",
-      "local_timestamp": "2026-03-12T14:30:00Z",
-      "active_version": "remote",
-      "system": "snes",
-      "game": "super_metroid"
-    }
-  ],
-  "device_name": "my-brick",
-  "device_ip": "192.168.1.42",
-  "conflict_count": 1
-}
-```
-
-**Implementation:**
-1. Call `ch_list_conflicts "$CONTINUITY_REPO_DIR"` to get `.conflict` file paths.
-2. For each `.conflict` file, read the JSON metadata (using `grep` and `sed` — no `jq`).
-3. Determine `active_version`: compare the canonical `.srm` file in the repo against the `.local` file. If canonical matches the file currently on the device (at the path from `pm_repo_to_local`), `active_version` is `"remote"` (the default after conflict detection). If the `.local` file has been swapped in (via `try.cgi`), `active_version` is `"local"`.
-4. Derive `system` and `game` from the repo path (e.g., `snes/super_metroid.srm` → system `snes`, game `super_metroid`).
-5. Output JSON via `printf`.
-
-**Determining `active_version`:** After conflict detection, the canonical path always holds the remote version. When the user clicks "Try" on the local version, `try.cgi` swaps the `.local` file into the device's save directory. To track which version is active, `try.cgi` writes a marker file at `$repo_dir/.continuity/trying_<file_hash>` containing `"remote"` or `"local"`. `conflicts.cgi` reads this marker. If no marker exists, the default is `"remote"` (the post-conflict-detection state).
-
-#### `cgi-bin/try.cgi` — Swap a Save Version for Testing
-
-**Method:** POST
-
-**Query parameters:**
-- `file` — the canonical repo-relative `.srm` path (URL-encoded)
-- `version` — `"remote"` or `"local"`
-
-**Response:** JSON with status.
-
-```json
-{
-  "status": "ok",
-  "file": "snes/super_metroid.srm",
-  "active_version": "local",
-  "message": "Swapped to local version (my-brick). Launch the game to test."
-}
-```
-
-**Implementation:**
-1. Parse `file` and `version` from `QUERY_STRING`.
-2. Validate `file` exists as a conflict (`.conflict` metadata exists).
-3. Determine the device save path via `pm_repo_to_local "$file"`.
-4. If `version` is `"local"`:
-   - Find the `.local` file: `$CONTINUITY_REPO_DIR/$file.$device_name.local` (where `$device_name` is parsed from the `.local` filename via `ch_list_local_files`).
-   - Copy the `.local` file to the device save path: `cp "$local_file" "$device_save_path"`.
-5. If `version` is `"remote"`:
-   - Copy the canonical repo file to the device save path: `cp "$CONTINUITY_REPO_DIR/$file" "$device_save_path"`.
-6. Write the `trying_<file_hash>` marker file with the active version.
-7. Return success JSON.
-
-**Safety:** This only copies files to the device save directory — it does not modify the repo, commit, or push. The user can swap back and forth freely. The canonical `.srm` and `.local` file in the repo remain untouched.
-
-**File hash for marker:** Use a simple path-to-hash derivation: `printf '%s' "$file" | md5sum | cut -d' ' -f1` (BusyBox md5sum is available). This prevents filename collision for markers across different conflicted saves.
-
-#### `cgi-bin/resolve.cgi` — Commit a Resolution
-
-**Method:** POST
-
-**Query parameters:**
-- `file` — the canonical repo-relative `.srm` path (URL-encoded)
-- `resolution` — `"keep_remote"`, `"keep_local"`, or `"keep_newest"`
-
-**Response:** JSON with status.
-
-```json
-{
-  "status": "ok",
-  "file": "snes/super_metroid.srm",
-  "resolution": "keep_local",
-  "message": "Resolved: kept local version from my-brick."
-}
-```
-
-**Implementation:**
-1. Parse `file` and `resolution` from `QUERY_STRING`.
-2. Validate `resolution` is one of the three accepted values (`keep_remote`, `keep_local`, `keep_newest`). Reject `prompt` — it makes no sense in a resolution UI.
-3. Call `ch_resolve "$CONTINUITY_REPO_DIR" "$file" "$resolution"`.
-4. If `ch_resolve` returns 0:
-   - Copy the resolved canonical file to the device save path (ensure device has the winning version).
-   - Remove the `trying_*` marker file for this save.
-   - Return success JSON.
-5. If `ch_resolve` returns 1:
-   - Return error JSON with status `"error"` and a message.
-6. After resolution, if `ch_list_conflicts` returns empty (all conflicts resolved), call `cui_stop` to shut down the server (or return a flag in the JSON so the UI can show "all resolved").
+The binary reads the exit code to determine success/failure and displays appropriate feedback.
 
 ---
 
-### Static Web UI (`src/core/conflict_ui/www/index.html`)
+### SDL2 Rendering Details
 
-A single HTML file with inline CSS and inline JavaScript. No external dependencies, no build step, no framework. Must render correctly on mobile Safari and mobile Chrome (the user's phone).
+**Display strategy:** The resolver does NOT link against NextUI's `api.o` / `libminui`. It uses SDL2 directly (`SDL_Init`, `SDL_CreateWindow`, `SDL_GetWindowSurface`, `SDL_ttf`). Reasons:
 
-**UI layout (mobile-first):**
+1. NextUI's GFX API is tightly coupled to the launcher's lifecycle (it assumes it owns the display)
+2. Tool PAKs like `battery.elf` and `clock.elf` each have their own SDL2 init — there's no shared library
+3. Direct SDL2 is simpler to build and test on desktop Linux during development
+
+**Font:** Use an embedded TTF font compiled into the binary as a C array (same pattern as `show2.elf` which embeds `RoundedMplus1c_Bold_reduced_ttf`). The font file can be copied from NextUI's assets or a permissively-licensed alternative.
+
+**Screen layout at 1024x768 (TrimUI Brick):**
 
 ```
-┌─────────────────────────────────┐
-│  Continuity — Resolve Conflicts │
-│  Device: my-brick               │
-├─────────────────────────────────┤
-│                                 │
-│  ┌─ snes / super_metroid ─────┐ │
-│  │                            │ │
-│  │  Version A: my-deck        │ │
-│  │  Saved: Mar 12, 1:00 PM    │ │
-│  │  [Try This Version]        │ │
-│  │                            │ │
-│  │  Version B: my-brick       │ │
-│  │  Saved: Mar 12, 2:30 PM    │ │
-│  │  [Try This Version]  ← active │
-│  │                            │ │
-│  │  ── or ──                  │ │
-│  │  [Keep Newest Automatically]│ │
-│  │                            │ │
-│  │  Currently testing: my-brick│ │
-│  │  [✓ Keep This Version]     │ │
-│  └────────────────────────────┘ │
-│                                 │
-│  ┌─ gb / links_awakening ────┐  │
-│  │  ... (same layout)        │  │
-│  └────────────────────────────┘ │
-│                                 │
-│  ┌────────────────────────────┐ │
-│  │  All conflicts resolved!   │ │
-│  │  Server shutting down.     │ │
-│  └────────────────────────────┘ │
-│                                 │
-└─────────────────────────────────┘
+┌─────────────────────────────────────────┐  y=0
+│                                         │
+│   Save Conflicts (2)                    │  y=30  — header, FONT_LARGE (16pt scaled)
+│                                         │
+├─────────────────────────────────────────┤  y=80  — list starts
+│                                         │
+│   ► SNES · Super Metroid                │  row 0, selected (highlight pill)
+│     mine (my-brick) · Mar 12, 2:30 PM   │
+│     theirs (my-deck) · Mar 12, 1:00 PM  │
+│     testing: mine                       │
+│                                         │
+│     GB · Links Awakening                │  row 1
+│     mine (my-brick) · Mar 12, 3:00 PM   │
+│     theirs (my-deck) · Mar 12, 2:00 PM  │
+│                                         │
+├─────────────────────────────────────────┤  y=700 — footer
+│   Ⓐ Actions   Ⓑ Exit                  │
+└─────────────────────────────────────────┘  y=768
 ```
 
-**Behavior:**
+**Colors (matching NextUI dark theme):**
+- Background: black (`0x000000`)
+- Text: light gray (`0xCCCCCC`)
+- Selected row highlight: dark gray pill (`0x262626`)
+- Header text: white (`0xFFFFFF`)
+- "mine" label: slightly brighter to distinguish from "theirs"
+- Footer hint text: mid-gray (`0x999999`)
 
-1. On load, fetch `GET /cgi-bin/conflicts.cgi`. Render the conflict list.
-2. "Try This Version" button: `POST /cgi-bin/try.cgi?file=...&version=remote|local`. Update the card to show which version is active. Show prompt: "Launch the game on your device to test this save."
-3. "Keep This Version" button: appears after the user has tried a version. `POST /cgi-bin/resolve.cgi?file=...&resolution=keep_remote|keep_local`. On success, remove the conflict card with a brief animation. If resolution is `keep_local` and the active version was `remote` (or vice versa), warn: "You're keeping a version you haven't tested. Are you sure?" (simple `confirm()` dialog).
-4. "Keep Newest Automatically" button: `POST /cgi-bin/resolve.cgi?file=...&resolution=keep_newest`. Same removal behavior.
-5. When all conflicts are resolved, show "All conflicts resolved!" message. The page stops polling.
-6. Auto-refresh: poll `GET /cgi-bin/conflicts.cgi` every 10 seconds to detect new conflicts or external resolutions. Update the UI diff-style (don't re-render the whole page if nothing changed).
+**Scrolling:** If more conflicts than fit on screen (~5 rows at this layout density), the list scrolls. Cursor wraps at top/bottom.
 
-**Styling:**
-- System font stack, no web fonts
-- Dark background (#1a1a2e or similar), light text — matches gaming handheld aesthetic
-- Large touch targets (min 48px) — the user is on a phone
-- No animations except card removal fade
-- Responsive: single column, fills viewport width
+**Input polling:** Use `SDL_PollEvent` directly to read joystick button events. Button mappings from `platform.h`:
+- D-pad Up/Down: `JOY_AXIS` or button events for `BTN_UP` / `BTN_DOWN`
+- A button: `JOY_A = 1` (confirm)
+- B button: `JOY_B = 0` (cancel/back)
+
+The input system reads from `/dev/input/event*` via SDL2's joystick subsystem. On desktop Linux (for testing), keyboard arrows + Enter/Escape are mapped as fallbacks.
 
 ---
 
-### Input Validation and Security
+### PAK Structure
 
-**Path traversal prevention:** All `file` parameters received from the client must be validated before use:
-1. Must not contain `..` path components.
-2. Must end in `.srm`.
-3. Must correspond to an existing `.conflict` file in the repo (call `ch_list_conflicts` and check membership).
-4. Reject any request that fails validation with HTTP 400.
+The PAK is delivered at `/mnt/SDCARD/Tools/tg5040/Continuity.pak/`:
 
-**URL decoding:** BusyBox httpd does NOT automatically URL-decode `QUERY_STRING`. CGI scripts must decode `%XX` sequences. Use `busybox httpd -d "$string"` (the `-d` flag URL-decodes a string) or a `sed` pattern:
+```
+Continuity.pak/
+├── launch.sh              ← invokes resolve.elf with correct paths
+├── resolve.elf            ← compiled conflict resolver (ARM)
+├── resolve.sh             ← shell helper for try/resolve operations
+├── bin/
+│   └── git                ← statically-linked git binary (from Sprint 0.3)
+├── config/
+│   └── platform_maps/
+│       └── nextui.json    ← platform map (from Sprint 0.2)
+└── src/
+    └── core/              ← bundled core shell modules
+        ├── conflict_handler.sh
+        ├── sync_engine.sh
+        ├── cold_start.sh
+        └── path_mapper.sh
+```
+
+**`launch.sh`:**
+
 ```sh
-urldecode() {
-    printf '%s' "$1" | sed 's/+/ /g; s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g' | xargs -0 printf '%b'
-}
+#!/bin/sh
+cd "$(dirname "$0")"
+
+REPO_DIR="/mnt/SDCARD/Saves/.continuity_repo"
+SAVES_ROOT="/mnt/SDCARD/Saves"
+DEVICE_NAME=$(cat "$REPO_DIR/.continuity/device_name" 2>/dev/null || printf "unknown")
+
+./resolve.elf \
+    --repo-dir "$REPO_DIR" \
+    --saves-dir "$SAVES_ROOT" \
+    --device-name "$DEVICE_NAME" \
+    --core-dir "$(pwd)/src/core" \
+    --pal-path "$(pwd)/pal_nextui.sh"
 ```
 
-**Bind address:** `httpd` binds to `0.0.0.0` (all interfaces) so the phone can reach it over LAN. This is acceptable per the existing security assessment in `docs/design/security.md` — the server runs on a private LAN, serves no credentials, and the worst case is someone on the same WiFi can swap save files.
-
-**No authentication:** The conflict UI does not require authentication. It serves no secrets — only save file metadata and binary `.srm` content. The security model accepts LAN-level trust (consistent with the enrollment httpd design in architecture.md).
+**Note:** This sprint focuses on the resolver binary and shell helper. The full PAK packaging (bundling git, core modules, platform PAL) is Sprint 1.2's concern. For Sprint 0.9, the binary and shell helper are built and tested in the repo; the PAK structure above is the target layout, not something this sprint assembles.
 
 ---
 
-## Integration with Daemon Lifecycle
+### Build System
 
-This sprint does NOT implement daemon integration (that's Sprint 1.1). However, the API is designed for it:
+**Makefile:** `src/platforms/nextui/Makefile`
 
-**Planned daemon integration (Sprint 1.1):**
-```sh
-# After boot sync, if conflicts exist:
-if [ -n "$(ch_list_conflicts "$CONTINUITY_REPO_DIR")" ]; then
-    cui_start "$CONTINUITY_REPO_DIR" "8085" &
-    pal_log "info" "Conflict UI available at $(cui_get_url 8085)"
-fi
+```makefile
+# Cross-compilation for TrimUI Brick (ARM)
+CROSS_COMPILE ?= arm-linux-gnueabihf-
+CC = $(CROSS_COMPILE)gcc
+CFLAGS = -Wall -Wextra -O2 $(shell sdl2-config --cflags)
+LDFLAGS = $(shell sdl2-config --libs) -lSDL2_ttf
+
+# Native build for desktop testing
+.PHONY: native
+native: CC = gcc
+native: resolve.elf
+
+resolve.elf: resolve.c embedded_font.h
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+# Generate embedded font header from TTF file
+embedded_font.h: font.ttf
+	xxd -i $< > $@
 ```
 
-**Manual invocation (Sprint 1.2 Tool PAK):**
-The NextUI Tool PAK can start/stop the conflict UI server as a menu option.
+**Desktop testing:** `make native` builds for the host architecture using the system's SDL2. Developers can run `./resolve.elf --repo-dir /tmp/test-repo ...` on desktop Linux to test the UI with keyboard input before cross-compiling for ARM.
 
-**For this sprint:** The server is tested by starting it manually via the test harness. The integration test starts `cui_start`, makes HTTP requests via `wget`, and verifies responses.
+**CI:** The native build runs in CI. The ARM cross-build requires a cross-compilation toolchain (deferred to Sprint 1.2's packaging work). Sprint 0.9's CI validates that the C code compiles and the desktop binary works with the test fixtures.
+
+---
+
+## Integration with Sprint 1.2
+
+Sprint 1.2 (NextUI Tool PAK) will wrap this resolver into a larger tool with:
+- Status display (last sync, pending changes, linked devices)
+- Manual sync trigger
+- Conflict resolution (this sprint's binary, possibly integrated into a larger `continuity.elf`)
+- Device unlinking
+
+This sprint's `resolve.elf` may become a standalone binary invoked by Sprint 1.2's `launch.sh`, or its code may be folded into a larger `continuity.elf`. Either path works — the conflict resolution logic is self-contained.
 
 ---
 
@@ -273,16 +326,18 @@ The NextUI Tool PAK can start/stop the conflict UI server as a menu option.
 
 | Item | Sprint |
 |------|--------|
-| Daemon auto-start of conflict UI on boot | 1.1 |
-| NextUI Tool PAK menu integration | 1.2 |
-| RetroDeck desktop notification integration | 2.2 |
-| Android conflict resolution UI (native) | 3.2 |
-| HTTPS / TLS for the conflict UI server | never (LAN only, no secrets) |
-| Authentication for the conflict UI | never (LAN trust model) |
-| Save file preview / hex dump in the UI | post-1.0 |
-| Multi-device `.local` selection (pick which device's save) | 1.2 |
-| Automatic conflict UI shutdown after idle timeout | 1.1 |
-| `pal_on_sync_complete` hook integration | 1.1 |
+| Full Tool PAK packaging (bundling git, core modules, PAL) | 1.2 |
+| Sync status display | 1.2 |
+| Manual sync trigger | 1.2 |
+| Device unlinking UI | 1.2 |
+| ARM cross-compilation toolchain setup | 1.2 |
+| Daemon auto-launch of resolver on conflict | 1.1 |
+| show2.elf notification for conflicts (if daemon doesn't launch resolver) | 1.1 |
+| RetroDeck conflict resolution UI | 2.2 |
+| Android conflict resolution UI | 3.2 |
+| Multi-device `.local` selection (pick which device's save in 3+ device conflict) | 1.2 |
+| Save file preview / hex dump | post-1.0 |
+| Animated transitions between screens | never |
 
 ---
 
@@ -292,263 +347,183 @@ The NextUI Tool PAK can start/stop the conflict UI server as a menu option.
 
 | File | Purpose |
 |------|---------|
-| `src/core/conflict_ui/server.sh` | Server lifecycle: `cui_start`, `cui_stop`, `cui_is_running`, `cui_get_url` |
-| `src/core/conflict_ui/cgi-bin/_bootstrap.sh` | Shared CGI bootstrap: source PAL, core modules, set variables |
-| `src/core/conflict_ui/cgi-bin/conflicts.cgi` | GET: list conflicts as JSON |
-| `src/core/conflict_ui/cgi-bin/try.cgi` | POST: swap a save version into the device's active save slot |
-| `src/core/conflict_ui/cgi-bin/resolve.cgi` | POST: commit a resolution via `ch_resolve` |
-| `src/core/conflict_ui/www/index.html` | Single-page conflict resolution UI (HTML + inline CSS + inline JS) |
-| `tests/unit/core/test_conflict_ui_server.sh` | Unit tests for `cui_start`, `cui_stop`, `cui_is_running`, `cui_get_url` |
-| `tests/unit/core/test_conflict_ui_cgi.sh` | Unit tests for CGI scripts (invoke directly, verify JSON output) |
-| `tests/integration/test_conflict_ui_flow.sh` | Integration test: start server, make HTTP requests, verify conflict resolution end-to-end |
+| `src/platforms/nextui/resolve.c` | Conflict resolver SDL2 binary — display, input, delegates to shell |
+| `src/platforms/nextui/resolve.sh` | Shell helper: `try` and `resolve` commands, sources PAL + core modules |
+| `src/platforms/nextui/Makefile` | Build system for native and cross-compiled `resolve.elf` |
+| `src/platforms/nextui/embedded_font.h` | Auto-generated embedded font data (from TTF via `xxd`) |
+| `tests/unit/platforms/nextui/test_resolve_shell.sh` | Unit tests for `resolve.sh` try/resolve commands |
+| `tests/integration/test_resolve_flow.sh` | Integration test: set up conflicts, invoke resolver operations, verify results |
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `docs/design/architecture.md` | Add Conflict Resolution UI section referencing this sprint |
-| `docs/design/security.md` | Add conflict UI to httpd attack surface table (same risk level as enrollment httpd) |
+| `docs/design/architecture.md` | Add Conflict Resolution UI section describing the on-device binary approach |
 
 ### Directories Created
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/core/conflict_ui/` | Conflict resolution UI module root |
-| `src/core/conflict_ui/cgi-bin/` | CGI scripts served by BusyBox httpd |
-| `src/core/conflict_ui/www/` | Static web assets (index.html) |
+| `tests/unit/platforms/` | Platform-specific unit tests (new directory tree) |
+| `tests/unit/platforms/nextui/` | NextUI platform unit tests |
 
 ---
 
 ## Acceptance Criteria
 
-### `cui_start`
+### Conflict Scanning and Parsing
 
-1. Starts a BusyBox `httpd` process listening on the specified port.
-2. Writes the httpd PID to `$repo_dir/.continuity/conflict_ui.pid`.
-3. Writes the CGI bootstrap config to `$repo_dir/.continuity/conflict_ui.conf`.
-4. After `cui_start`, `GET /cgi-bin/conflicts.cgi` returns valid JSON (verified via `wget`).
-5. After `cui_start`, `GET /index.html` returns the HTML UI.
-6. Returns 1 if BusyBox httpd is not available.
-7. Returns 1 if the port is already in use.
+1. `resolve.elf` scans the repo directory and finds all `.conflict` files (excluding `.git/`).
+2. For each `.conflict` file, parses `file`, `remote_device`, `remote_timestamp`, `local_device`, `local_timestamp` from the JSON.
+3. Derives `system_name` and `game_name` from the `file` path (e.g., `snes/super_metroid.srm` → `snes`, `super_metroid`).
+4. Handles repos with 0 conflicts gracefully (shows "No conflicts" message, exits after brief delay).
+5. Handles repos with up to `MAX_CONFLICTS` (32) conflicts.
 
-### `cui_stop`
+### Display
 
-8. Kills the httpd process identified by the PID file.
-9. Removes the PID file after stopping.
-10. Returns 0 if no server is running (idempotent).
-11. Removes the `conflict_ui.conf` file.
+6. Renders a header showing the conflict count.
+7. Renders each conflict as a multi-line row showing system, game, both device names, and both timestamps.
+8. Highlights the currently selected row with a distinct background color.
+9. Shows a footer with button hints ("A: Actions  B: Exit").
+10. Scrolls the list when there are more conflicts than fit on screen.
+11. When a version is being tested (after "Try"), the row shows which version is active.
 
-### `cui_is_running`
+### Input Handling
 
-12. Returns 0 when a conflict UI server is running (PID file exists and process alive).
-13. Returns 1 when no server is running.
-14. Returns 1 when PID file exists but process is dead (stale PID file).
+12. D-pad Up/Down moves the cursor through the conflict list.
+13. A button opens the action submenu for the selected conflict.
+14. B button exits the program (returns to NextUI Tools menu).
+15. In the action submenu: D-pad Up/Down navigates options, A selects, B cancels back to list.
+16. On desktop Linux (native build), keyboard arrow keys + Enter/Escape work as equivalents.
 
-### `cui_get_url`
+### Action Submenu
 
-15. Prints a URL in the format `http://<lan-ip>:<port>`.
-16. Returns 1 if no LAN IP address can be determined.
+17. "Try Mine" copies the `.local` file to the device save path via `resolve.sh try`.
+18. "Try Theirs" copies the canonical (remote) `.srm` to the device save path via `resolve.sh try`.
+19. After a try operation, the conflict row updates to show which version is active.
+20. "Keep Mine" calls `resolve.sh resolve` with `keep_local`, removes the conflict from the list on success.
+21. "Keep Theirs" calls `resolve.sh resolve` with `keep_remote`, removes the conflict from the list on success.
+22. "Keep Newest" calls `resolve.sh resolve` with `keep_newest`, removes the conflict from the list on success.
+23. If `resolve.sh resolve` returns non-zero, the UI shows a brief error message and does not remove the conflict.
+24. After all conflicts are resolved, shows "All conflicts resolved!" and exits after a brief delay.
 
-### `conflicts.cgi`
+### `resolve.sh try`
 
-17. Returns valid JSON with a `conflicts` array, `device_name`, and `conflict_count`.
-18. Each conflict object contains `file`, `remote_device`, `remote_timestamp`, `local_device`, `local_timestamp`, `active_version`, `system`, and `game`.
-19. Returns `{"conflicts": [], "conflict_count": 0, ...}` when no conflicts exist.
-20. `active_version` defaults to `"remote"` when no try marker exists.
-21. `active_version` reflects `"local"` after a `try.cgi` call swaps to the local version.
+25. Sources PAL and core modules correctly.
+26. Determines the device save path via `pm_repo_to_local`.
+27. When `version=local`: finds the `.local` file and copies it to the device save path.
+28. When `version=remote`: copies the canonical `.srm` from the repo to the device save path.
+29. Does not modify the repo (no commits, no git operations).
+30. Returns 0 on success, 1 on error.
 
-### `try.cgi`
+### `resolve.sh resolve`
 
-22. Copies the requested version's `.srm` bytes to the device save path (via `pm_repo_to_local`).
-23. Does not modify the repo (no commits, no git operations).
-24. Returns JSON with `status: "ok"` and the new `active_version`.
-25. Returns HTTP 400 with error JSON if `file` parameter fails path validation.
-26. Returns HTTP 400 if `version` is not `"remote"` or `"local"`.
-27. Returns HTTP 404 if no `.conflict` metadata exists for the requested file.
-28. After swap, the device save file contains the correct bytes (verified by `cmp -s`).
+31. Sources PAL and core modules correctly.
+32. Calls `ch_resolve` with the given resolution (`keep_local`, `keep_remote`, or `keep_newest`).
+33. After successful resolution, copies the resolved canonical `.srm` to the device save path.
+34. Returns `ch_resolve`'s exit code.
 
-### `resolve.cgi`
+### Build
 
-29. Calls `ch_resolve` with the specified resolution and returns JSON with `status: "ok"`.
-30. After resolution, the device save path contains the winning version's bytes.
-31. Returns HTTP 400 if `resolution` is not one of `keep_remote`, `keep_local`, `keep_newest`.
-32. Returns HTTP 400 if `resolution` is `prompt` (not valid in UI context).
-33. Returns HTTP 400 if `file` parameter fails path validation.
-34. Returns HTTP 500 with error JSON if `ch_resolve` returns 1.
-35. Removes the `trying_*` marker file for the resolved save.
-36. Returns `remaining_conflicts` count in the JSON response.
+35. `make native` produces a working `resolve.elf` on desktop Linux (x86_64).
+36. The native binary runs correctly with a test repo and keyboard input.
+37. `resolve.c` compiles with `-Wall -Wextra` and no warnings.
+38. The Makefile supports `CROSS_COMPILE` variable for ARM cross-compilation (structure only — actual cross-compile is Sprint 1.2).
 
-### Input Validation
+### Shell Code Quality
 
-37. `file` parameter containing `..` is rejected with HTTP 400.
-38. `file` parameter not ending in `.srm` is rejected with HTTP 400.
-39. `file` parameter not matching any known conflict is rejected with HTTP 400 (for `try.cgi`) or HTTP 404 (for `resolve.cgi` if conflict already resolved).
-40. URL-encoded `file` parameter is correctly decoded (e.g., `%20` for spaces).
+39. `resolve.sh` passes `shellcheck` with no errors.
+40. `resolve.sh` passes `busybox ash -n` syntax check.
+41. No banned BusyBox ash constructs used.
+42. All variable expansions are quoted.
+43. All tests pass under `busybox ash`.
 
-### Web UI (`index.html`)
+### C Code Quality
 
-41. Loads and renders conflict list from `/cgi-bin/conflicts.cgi` on page load.
-42. "Try This Version" button triggers POST to `/cgi-bin/try.cgi` and updates the card UI.
-43. "Keep This Version" button triggers POST to `/cgi-bin/resolve.cgi` and removes the card.
-44. "Keep Newest Automatically" button triggers POST to `/cgi-bin/resolve.cgi?resolution=keep_newest`.
-45. Shows confirmation dialog when keeping a version the user hasn't tried.
-46. Shows "All conflicts resolved!" message when conflict list is empty.
-47. Auto-polls every 10 seconds and updates the UI.
-48. Renders correctly on mobile Safari (iOS) and mobile Chrome (Android) at 375px width.
-49. No external resource loads (fonts, CDNs, scripts) — fully self-contained.
-50. Touch targets are at least 48px in height.
-
-### Code Quality
-
-51. All `.sh` and `.cgi` files pass `shellcheck` with no errors.
-52. All `.sh` and `.cgi` files pass `busybox ash -n` syntax check.
-53. No banned BusyBox ash constructs used (see CLAUDE.md table).
-54. All variable expansions are quoted.
-55. CGI scripts use `printf` for output, not `echo`.
-56. All tests pass under `busybox ash`.
-57. Test files pass `shellcheck` and `busybox ash -n`.
+44. No compiler warnings with `-Wall -Wextra`.
+45. No buffer overflows — all string operations use bounded copies (`snprintf`, `strncpy`).
+46. All `system()` calls construct the command string safely (no user-controlled input injected without validation).
+47. SDL2 resources are properly cleaned up on exit.
+48. Program handles missing repo directory gracefully (error message, exit 1).
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests (`tests/unit/core/test_conflict_ui_server.sh`)
+### Unit Tests (`tests/unit/platforms/nextui/test_resolve_shell.sh`)
 
-Server lifecycle tests. Each test creates a fresh `TEST_TMPDIR`, sets up a minimal repo with conflict artifacts, and verifies server start/stop behavior.
+Tests for `resolve.sh` — the shell helper that the binary calls. Each test creates a fresh `TEST_TMPDIR`, sets up a repo with conflict artifacts, and verifies try/resolve behavior.
 
-- `cui_start`: Start server, verify PID file exists, verify process is alive, verify port is listening (via `wget` to localhost).
-- `cui_start` with port in use: Start two servers on the same port, verify second returns 1.
-- `cui_stop`: Start server, stop it, verify PID file removed, verify process gone.
-- `cui_stop` when not running: Verify returns 0 (idempotent).
-- `cui_is_running`: Verify returns 0 when running, 1 when stopped, 1 when PID file is stale.
-- `cui_get_url`: Verify output format matches `http://<ip>:<port>`.
+**`resolve.sh try` tests:**
 
-### Unit Tests (`tests/unit/core/test_conflict_ui_cgi.sh`)
+- Set up a conflict for `snes/super_metroid.srm`. Call `resolve.sh try ... local`. Assert device save path contains the `.local` file's bytes.
+- Call `resolve.sh try ... remote`. Assert device save path contains the canonical `.srm` bytes.
+- Call `resolve.sh try` with a nonexistent file. Assert returns 1.
+- Verify no git commits are made after a try operation.
+- Swap to local, then swap to remote, then swap to local again. Assert each swap puts the correct bytes in place.
 
-CGI script tests. Each test invokes the CGI script directly (setting `QUERY_STRING`, `REQUEST_METHOD`, etc. as environment variables) and captures stdout. Verifies JSON output structure and correctness.
+**`resolve.sh resolve` tests:**
 
-**`conflicts.cgi` tests:**
+- Set up a committed conflict state. Call `resolve.sh resolve ... keep_remote`. Assert returns 0. Assert canonical `.srm` has remote bytes. Assert `.local` and `.conflict` files are gone. Assert device save path has remote bytes.
+- Same for `keep_local` — assert canonical now has local bytes.
+- Same for `keep_newest` — assert resolution matches the newer timestamp.
+- Call with invalid resolution string. Assert returns 1.
+- Call with nonexistent conflict. Assert returns 1.
 
-- No conflicts: verify `{"conflicts": [], "conflict_count": 0, ...}`.
-- One conflict: set up a `.conflict` file, verify JSON contains correct fields.
-- Two conflicts: verify both appear in the array.
-- `active_version` default: verify `"remote"` when no try marker exists.
-- `active_version` after try: write a try marker, verify `"local"` is returned.
+### Integration Test (`tests/integration/test_resolve_flow.sh`)
 
-**`try.cgi` tests:**
-
-- Swap to local: set up conflict, POST `version=local`, verify device save file contains local bytes.
-- Swap to remote: POST `version=remote`, verify device save file contains remote bytes.
-- Path traversal: POST `file=../../etc/passwd`, verify HTTP 400.
-- Invalid file: POST `file=nonexistent.srm`, verify HTTP 400.
-- Invalid version: POST `version=invalid`, verify HTTP 400.
-- No repo modification: verify no new git commits after swap.
-
-**`resolve.cgi` tests:**
-
-- Resolve keep_remote: verify `ch_resolve` called correctly, device save updated, marker removed.
-- Resolve keep_local: same flow with `keep_local`.
-- Resolve keep_newest: same flow with `keep_newest`.
-- Reject prompt: POST `resolution=prompt`, verify HTTP 400.
-- Path traversal: verify HTTP 400.
-- ch_resolve failure: stub `ch_resolve` to return 1, verify HTTP 500.
-
-### Integration Test (`tests/integration/test_conflict_ui_flow.sh`)
-
-Full end-to-end test using a real BusyBox httpd server. Simulates the complete user flow:
+End-to-end test that simulates the full conflict lifecycle without the SDL2 UI (tests the data layer only). Uses the same two-device simulation pattern as Sprint 0.8's integration test.
 
 **Setup:**
-1. Create `TEST_TMPDIR` with bare remote, two working clones (device-a, device-b).
-2. Create a diverged state and run `ch_handle_pull_conflict` to create conflict artifacts.
-3. Source test PAL and all core modules.
+1. Create bare remote, two working clones (device-a, device-b).
+2. Create diverged state, run `ch_handle_pull_conflict` to produce conflict artifacts.
+3. Create a mock saves directory structure.
 
-**Scenario 1: Full conflict resolution flow**
+**Scenario 1: Try and resolve flow**
 
-1. Call `cui_start "$CONTINUITY_REPO_DIR" "8185"` (test port to avoid collisions).
-2. `wget -qO- http://127.0.0.1:8185/cgi-bin/conflicts.cgi` — verify JSON lists 1 conflict.
-3. `wget -qO- --post-data='' "http://127.0.0.1:8185/cgi-bin/try.cgi?file=snes/super_metroid.srm&version=local"` — verify success, verify device save file has local bytes.
-4. `wget -qO- --post-data='' "http://127.0.0.1:8185/cgi-bin/try.cgi?file=snes/super_metroid.srm&version=remote"` — verify success, verify device save file has remote bytes.
-5. `wget -qO- --post-data='' "http://127.0.0.1:8185/cgi-bin/try.cgi?file=snes/super_metroid.srm&version=local"` — swap back to local.
-6. `wget -qO- --post-data='' "http://127.0.0.1:8185/cgi-bin/resolve.cgi?file=snes/super_metroid.srm&resolution=keep_local"` — verify resolution committed.
-7. `wget -qO- http://127.0.0.1:8185/cgi-bin/conflicts.cgi` — verify empty conflicts list.
-8. Call `cui_stop "$CONTINUITY_REPO_DIR"` — verify clean shutdown.
+1. Verify conflict artifacts exist in the repo.
+2. Call `resolve.sh try ... local`. Verify device save has local bytes.
+3. Call `resolve.sh try ... remote`. Verify device save has remote bytes.
+4. Call `resolve.sh resolve ... keep_local`. Verify conflict resolved, device save has local bytes, artifacts cleaned up.
 
-**Scenario 2: Input validation**
+**Scenario 2: Multiple conflicts**
 
-1. Start server.
-2. Send requests with `..` in file path — verify 400.
-3. Send requests with non-`.srm` file — verify 400.
-4. Send request for non-existent conflict — verify 400.
-5. Stop server.
+1. Set up two conflicts (`snes/zelda.srm` and `gb/links_awakening.srm`).
+2. Resolve each via `resolve.sh resolve ... keep_newest`.
+3. Verify both resolved, both device saves updated.
 
-**Scenario 3: Static content**
+**Scenario 3: Conflict scanning (binary data layer)**
 
-1. Start server.
-2. `wget -qO- http://127.0.0.1:8185/index.html` — verify contains `<html>`.
-3. Stop server.
+1. Create 3 `.conflict` files in the repo with valid JSON.
+2. The binary's scanning logic is tested via a small C test harness (`test_scan.c`) that calls the same scanning function and prints the parsed results.
+3. Verify all 3 conflicts are found with correct metadata.
 
----
+### Native Binary Smoke Test
 
-## BusyBox httpd Configuration
+A shell script that:
+1. Builds `resolve.elf` natively (`make native`)
+2. Sets up a test repo with conflicts
+3. Launches `resolve.elf` with `--headless` flag (renders one frame to verify no crash, then exits)
+4. Verifies exit code 0
 
-`cui_start` generates an `httpd.conf` file at `$repo_dir/.continuity/httpd.conf`:
-
-```
-# Continuity conflict resolution UI
-# CGI scripts in /cgi-bin/ are executed
-*.cgi:/bin/sh
-```
-
-BusyBox httpd CGI convention: files in the `cgi-bin/` directory with the `.cgi` extension are executed. The script's stdout becomes the HTTP response body. The script must output HTTP headers first (at minimum `Content-Type`), followed by a blank line, then the body.
-
-**CGI response pattern:**
-
-```sh
-#!/bin/sh
-printf 'Content-Type: application/json\r\n'
-printf '\r\n'
-printf '{"status": "ok"}\n'
-```
-
-**Error response pattern (HTTP 400):**
-
-```sh
-printf 'Status: 400 Bad Request\r\n'
-printf 'Content-Type: application/json\r\n'
-printf '\r\n'
-printf '{"status": "error", "message": "Invalid file parameter"}\n'
-```
-
-BusyBox httpd supports the `Status:` header from CGI scripts for non-200 responses.
+The `--headless` flag is a test-only mode: initializes SDL2 with `SDL_VIDEODRIVER=dummy`, renders one frame, dumps the conflict count to stdout, and exits. This allows CI to verify the binary works without a display.
 
 ---
 
-## Definition of Done
+## Resolved Questions
 
-- [ ] `src/core/conflict_ui/server.sh` implemented with all four `cui_*` functions.
-- [ ] `src/core/conflict_ui/cgi-bin/_bootstrap.sh` sources PAL and core modules correctly.
-- [ ] `src/core/conflict_ui/cgi-bin/conflicts.cgi` returns correct JSON for 0, 1, and multiple conflicts.
-- [ ] `src/core/conflict_ui/cgi-bin/try.cgi` swaps save versions without modifying the repo.
-- [ ] `src/core/conflict_ui/cgi-bin/resolve.cgi` calls `ch_resolve` and updates device save.
-- [ ] All CGI scripts validate input (path traversal, `.srm` suffix, conflict existence).
-- [ ] `src/core/conflict_ui/www/index.html` renders correctly on mobile browsers.
-- [ ] UI shows try/resolve workflow with confirmation for untested versions.
-- [ ] All shell files pass `shellcheck` with no errors.
-- [ ] All shell files pass `busybox ash -n` syntax check.
-- [ ] No banned BusyBox ash constructs used (see CLAUDE.md table).
-- [ ] All variable expansions quoted throughout.
-- [ ] Unit tests pass under `busybox ash`.
-- [ ] Integration test passes under `busybox ash` with real BusyBox httpd.
-- [ ] `docs/design/architecture.md` updated with conflict UI section.
-- [ ] `docs/design/security.md` updated with conflict UI attack surface.
-- [ ] Sprint summary written to `docs/sprints/sprint-0.9-summary.md` on completion.
+1. **Platform-specific or core?** **Resolved — platform-specific.** The compiled binary is NextUI-specific (SDL2, ARM, PAK structure). It goes under `src/platforms/nextui/`, not `src/core/`. The shell helper `resolve.sh` is also platform-specific because it sources the platform PAL. The core conflict handler logic remains in `src/core/conflict_handler.sh` where it belongs — this sprint only builds a UI layer on top of it.
+
+2. **Link against NextUI's api.o or use SDL2 directly?** **Resolved — SDL2 directly.** NextUI's GFX/PAD API is internal to the launcher and not exposed as a shared library. All existing Tool PAKs (settings.elf, battery.elf, etc.) statically compile their own copy of the needed API source files. For this sprint, using SDL2 directly is simpler and avoids coupling to NextUI's internal build system. If Sprint 1.2 builds a larger `continuity.elf` that needs deeper NextUI integration, it can pull in the API sources at that point.
+
+3. **C or C++?** **Resolved — C, with C++ acceptable if needed.** The resolver is a simple scrollable list with actions — no need for STL containers, templates, or RAII. Plain C with SDL2 keeps it minimal. If linking against system libraries on the device requires C++ linkage (some ARM toolchains bundle SDL2 with C++ deps), C++ compilation is fine, but the code stays procedural.
 
 ---
 
 ## Open Questions
 
-1. **`conflict_ui/` under `src/core/` vs `src/platforms/`?** The UI server and CGI scripts are platform-agnostic (BusyBox httpd + POSIX sh), so they belong in `src/core/` per the project rules. However, the `www/index.html` file is static HTML, not shell code. This seems acceptable since it's served by the core module, not by platform-specific code. Confirm or redirect.
+1. **Font source.** NextUI's `show2.elf` embeds `RoundedMplus1c_Bold_reduced_ttf` (the same font used across the system). Should we extract and reuse this font (it's SIL Open Font License), or bundle a different permissively-licensed font? Using the same font ensures visual consistency with the rest of NextUI.
 
-2. **CGI script executable bit on FAT32.** TrimUI Brick uses FAT32, which doesn't support Unix file permissions. BusyBox httpd may require CGI scripts to be executable (`chmod +x`). On FAT32, all files appear executable. Confirm this works on-device or identify a workaround (e.g., httpd `-c` config to map `.cgi` extension to `/bin/sh` interpreter).
+2. **SDL2 `dummy` video driver in CI.** The `--headless` smoke test relies on `SDL_VIDEODRIVER=dummy` to run without a display. Verify this works in the CI environment (needs `libsdl2-dev` installed). If not, the smoke test can be skipped in CI and only run manually.
 
-3. **`md5sum` availability on all targets.** The `trying_*` marker uses `md5sum` to hash the file path. BusyBox includes `md5sum`, but confirm it's present on all target platforms. Alternative: use the repo path directly (with `/` replaced by `_`) as the marker filename — simpler, no hash dependency.
+3. **`system()` latency.** Each try/resolve operation calls `system("./resolve.sh ...")`, which forks a shell, sources the PAL and core modules, runs the operation, and exits. On the TrimUI Brick's ARM CPU, this may take 0.5–2 seconds. The UI should show a "Working..." indicator during the operation. Confirm this latency is acceptable or consider pre-loading the shell environment.
