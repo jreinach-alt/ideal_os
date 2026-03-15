@@ -177,7 +177,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 0.8 — Conflict Handler
 
-**Status:** Planned
+**Status:** Complete
 
 **Scope:**
 - Implement `src/core/conflict_handler.sh` — detect git merge conflicts, preserve both versions with device attribution

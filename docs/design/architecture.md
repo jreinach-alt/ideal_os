@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-03-12
-**Last updated:** 2026-03-14 (Sprint 0.6 complete)
+**Last updated:** 2026-03-15 (Sprint 0.8 complete)
 
 ## Overview
 
@@ -152,9 +152,20 @@ Provides four functions:
 
 **Sentinel update rules:** The sentinel is updated after any scan that did work (even if all candidates were false positives), but NOT when no candidates were found (step 2 early return). This prevents the sentinel from advancing past changes that arrived at the mtime boundary.
 
-#### 7. Conflict Handler *(Sprint 0.8 — not yet implemented)*
+#### 7. Stale Boot Recovery (`src/core/stale_boot.sh`)
 
-`src/core/conflict_handler.sh` will handle runtime merge conflicts (when `git pull` detects diverged `.srm` files). Planned behavior:
+Handles unclean shutdown recovery. When a device boots with a sentinel present but no clean shutdown marker, the previous session ended abnormally (crash, battery loss, kill). Provides four functions:
+
+- **`sb_is_stale(repo_dir)`** — Returns 0 if stale (sentinel present, clean shutdown marker absent), 1 if not stale.
+- **`sb_mark_clean_shutdown(repo_dir)`** — Creates `$repo_dir/.continuity/clean_shutdown` with an ISO-8601 timestamp. Called by the daemon on graceful SIGTERM.
+- **`sb_clear_shutdown_marker(repo_dir)`** — Removes the clean shutdown marker (idempotent). Called at the start of recovery to prevent loops.
+- **`sb_run(repo_dir)`** — Full recovery flow: push any pending commits from the interrupted session → pull remote changes (with conflict handling) → catch-up scan of all device saves via `cd_list_device_saves()` and `cmp -s` → commit and push any local changes found → update sentinel. Returns 0 on success, 1 on unrecoverable error.
+
+**Dependencies:** Requires all earlier core modules — `sync_engine`, `cold_start` (for commit tracking), `boot_pull` (for remote change application), `change_detector` (for device save enumeration), and `runtime_poll` (for sentinel update).
+
+#### 8. Conflict Handler (`src/core/conflict_handler.sh`)
+
+Handles runtime merge conflicts when `git pull` detects diverged `.srm` files.
 
 When `git pull` detects a merge conflict on an `.srm` file:
 
@@ -179,7 +190,7 @@ When `git pull` detects a merge conflict on an `.srm` file:
 
 Resolution: User picks one (or the platform client auto-resolves by "keep newest" if configured). The `.local` and `.conflict` files are removed after resolution.
 
-#### 8. Connectivity Checking
+#### 9. Connectivity Checking
 
 Network connectivity is checked via the PAL function `pal_is_online()`. Each platform implements this according to its capabilities:
 
@@ -192,7 +203,7 @@ If offline:
 - Push attempts resume when connectivity returns
 - Pull happens on next boot or next connectivity event
 
-#### 9. Enrollment (`src/core/enrollment.sh`)
+#### 10. Enrollment (`src/core/enrollment.sh`)
 
 Device setup and credential management. Two paths:
 

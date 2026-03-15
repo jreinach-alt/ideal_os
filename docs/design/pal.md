@@ -85,7 +85,7 @@ Every PAL implementation must set these variables before `pal_init()` returns:
 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
-| `pal_on_sync_complete` | `()` | void | Hook called after a successful sync cycle. Platform can use this for notifications, UI updates, etc. |
+| `pal_on_sync_complete` | `()` | void | Hook called after a successful sync cycle. Platform can use this for notifications, UI updates, etc. *Not yet called by core modules — planned for Sprint 1.1 daemon lifecycle.* |
 | `pal_on_conflict` | `(canonical_repo_path)` | void | Hook called when a conflict `.local` file is created. Receives the canonical `.srm` repo path (e.g., `gba/minish_cap.srm`), not the `.local` file path. Platform can notify the user. |
 
 ---
@@ -260,10 +260,13 @@ pal_validate || exit 1
 
 . /path/to/src/core/path_mapper.sh
 . /path/to/src/core/sync_engine.sh
+. /path/to/src/core/enrollment.sh
 . /path/to/src/core/change_detector.sh
 . /path/to/src/core/cold_start.sh
 . /path/to/src/core/boot_pull.sh
 . /path/to/src/core/runtime_poll.sh
+. /path/to/src/core/stale_boot.sh
+. /path/to/src/core/conflict_handler.sh
 
 # Now call core functions — they use PAL variables/functions transparently
 pm_load_platform_map "$(pal_get_platform_map)"
