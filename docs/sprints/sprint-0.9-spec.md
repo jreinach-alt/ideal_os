@@ -1,324 +1,260 @@
-# Sprint 0.9 — On-Device Conflict Resolution UI
+# Sprint 0.9 — Conflict Resolution Operations
 
 **Status:** Draft
 **Date:** 2026-03-15
-**Dependencies:** Sprint 0.8 (conflict handler — `ch_list_conflicts`, `ch_list_local_files`, `ch_resolve` available)
+**Dependencies:** Sprint 0.8 (conflict handler — `ch_handle_pull_conflict`, `ch_list_conflicts`, `ch_list_local_files`, `ch_resolve` available)
 
 ---
 
 ## Goal
 
-Give users a way to resolve save conflicts directly on the handheld, using the device's own screen and buttons. When a conflict exists (two versions of the same `.srm` file from different devices), the user opens the Continuity resolver from the Tools menu, sees both versions with device names and timestamps, can swap either version into the active save slot to try it in-game, then come back and mark the winner as authoritative.
+Build the platform-agnostic operations layer that any conflict resolution UI calls into. Sprint 0.8 gave us the conflict *infrastructure* — detection, preservation, and resolution. But between "here are some `.conflict` files" and "resolve this one," there's a gap: the interactive resolution workflow.
 
-No phone. No second device. No IP address to hunt for. The user is already holding the device.
+A user resolving a conflict needs to:
+1. **Browse** — see all conflicts with meaningful context (system, game, device names, timestamps), not raw file paths
+2. **Try** — non-destructively swap a version into the device's active save slot so they can test it in-game
+3. **Track** — know which version is currently active (what did I last try?)
+4. **Resolve** — commit a decision (Sprint 0.8's `ch_resolve` handles this, but the UI needs structured feedback)
 
-This sprint builds a minimal compiled C binary using NextUI's SDL2 infrastructure, following the same pattern as existing Tool PAKs (`settings.elf`, `battery.elf`, etc.). The UI is deliberately minimal — a scrollable list with d-pad navigation and A/B button actions. Sprint 1.2 (full Tool PAK) will add sync status, manual sync trigger, and device management around this conflict resolution core.
+This sprint adds these operations to `src/core/conflict_handler.sh` as new `ch_*` functions. They output structured, parseable data that any consumer — shell scripts, compiled C binaries (NextUI), desktop apps (RetroDeck), Android Java — can read trivially.
+
+No platform-specific code. No display logic. Just the operations layer.
 
 ---
 
 ## Reference Specs
 
-- `docs/design/pal.md` — PAL interface, `CONTINUITY_REPO_DIR`, `CONTINUITY_SAVES_ROOT`, `CONTINUITY_DEVICE_NAME`
+- `docs/design/pal.md` — PAL interface, `CONTINUITY_SAVES_ROOT`, `CONTINUITY_DEVICE_NAME`, `pm_repo_to_local()`
 - `docs/design/architecture.md` — Conflict Resolution Strategy section
-- `src/core/conflict_handler.sh` — `ch_list_conflicts`, `ch_list_local_files`, `ch_resolve` (Sprint 0.8 output)
+- `src/core/conflict_handler.sh` — Existing Sprint 0.8 API
 - `src/core/path_mapper.sh` — `pm_repo_to_local` (Sprint 0.2 output)
-- `upstream/nextui/src/workspace/all/common/api.h` — NextUI GFX/PAD API surface
-- `upstream/nextui/src/workspace/all/common/defines.h` — Constants, font sizes, button IDs
-- `upstream/nextui/src/workspace/all/settings/menu.hpp` — NextUI menu framework (reference, not dependency)
-- `upstream/nextui/src/workspace/tg5040/platform/platform.h` — TrimUI Brick platform constants
 
 ---
 
 ## Scope
 
-### Architecture Overview
+### New Functions in `src/core/conflict_handler.sh`
 
-```
-┌──────────────────────────────────────────┐
-│ Continuity.pak/                           │
-│   launch.sh          ← entry point        │
-│   resolve.elf        ← compiled C binary  │
-│   resolve.sh         ← shell helper       │
-│   bin/git            ← bundled git        │
-│   config/            ← platform maps etc  │
-│   src/core/          ← bundled core shell │
-└──────────────────────────────────────────┘
-```
-
-The conflict resolver is a compiled C program (`resolve.elf`) that handles display and input via SDL2. It delegates all conflict logic (listing, trying, resolving) to shell helper functions via `system()` or `popen()` calls. This keeps the binary thin — it's a UI shell around the existing conflict handler.
-
-**Why C, not C++?** The NextUI settings app uses C++ with `<functional>`, `<vector>`, `<any>`, `<shared_mutex>` — heavy STL. Our binary is simpler (a scrollable list with actions) and doesn't need that machinery. C with the NextUI C API (`api.h`) keeps the binary small and the build simple. If linking against NextUI's shared libs requires C++ linkage, C++ is acceptable, but the implementation should stay procedural — no classes, no templates, no STL containers.
+All new functions follow the existing `ch_*` naming convention and BusyBox ash conventions established in Sprint 0.8.
 
 ---
 
-### Conflict Resolver Binary (`src/platforms/nextui/resolve.c`)
+#### `ch_get_conflict_info` — Parse one conflict's metadata
 
-A single-file C program (~400–600 lines) that:
+**Signature:** `ch_get_conflict_info <repo_dir> <repo_path>`
 
-1. Scans the repo for `.conflict` files (reads the filesystem directly, no shell call needed)
-2. Parses `.conflict` JSON to extract metadata (simple hand-rolled parser — the format is fixed and tiny)
-3. Renders a scrollable list of conflicts
-4. Handles d-pad/button input for navigation and actions
-5. Delegates try/resolve operations to shell scripts via `system()`
+**Parameters:**
+- `repo_dir` — absolute path to the repo working copy
+- `repo_path` — canonical repo-relative `.srm` path (e.g., `snes/super_metroid.srm`)
 
-**Data structures:**
-
-```c
-#define MAX_CONFLICTS 32
-#define MAX_PATH_LEN 256
-#define MAX_DEVICE_NAME 64
-
-typedef struct {
-    char file[MAX_PATH_LEN];           // canonical repo-relative .srm path
-    char remote_device[MAX_DEVICE_NAME];
-    char remote_timestamp[32];         // ISO-8601
-    char local_device[MAX_DEVICE_NAME];
-    char local_timestamp[32];          // ISO-8601
-    char system_name[32];              // derived from path (e.g., "snes")
-    char game_name[64];                // derived from path (e.g., "super_metroid")
-    int active_version;                // 0 = remote, 1 = local
-} ConflictEntry;
-
-typedef struct {
-    ConflictEntry entries[MAX_CONFLICTS];
-    int count;
-    int selected;                      // cursor position
-} ConflictList;
-```
-
-**Program flow:**
+**Output:** Key-value pairs to stdout, one per line:
 
 ```
-main():
-  1. Parse command-line args:
-       --repo-dir <path>    (required: CONTINUITY_REPO_DIR)
-       --saves-dir <path>   (required: CONTINUITY_SAVES_ROOT)
-       --device-name <name> (required: CONTINUITY_DEVICE_NAME)
-       --core-dir <path>    (required: path to src/core/)
-       --pal-path <path>    (required: path to pal_nextui.sh)
-
-  2. Scan repo for conflicts → populate ConflictList
-       Walk repo_dir recursively, find *.conflict files
-       For each: parse JSON, derive system/game from path
-       If count == 0: show "No conflicts" message, exit after 2s
-
-  3. Initialize SDL2 (GFX_init if linking NextUI, or direct SDL_Init)
-       SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK)
-       Open window/surface at device resolution
-       Load embedded font via SDL_ttf
-
-  4. Enter main loop:
-       while (running):
-         PAD_poll()  — or SDL_PollEvent for joystick/button
-         Handle input:
-           UP/DOWN  → move cursor
-           A        → open action submenu for selected conflict
-           B        → exit (back to Tools menu)
-         Render:
-           Header: "Save Conflicts (N)"
-           For each visible conflict:
-             "[system] game_name"
-             "  mine (device_name) — timestamp"
-             "  theirs (remote_device) — timestamp"
-             If active: "  ► testing: mine/theirs"
-           Footer: "A: Actions  B: Exit"
-         GFX_flip() / SDL_UpdateWindowSurface()
-
-  5. Cleanup and exit
+file=snes/super_metroid.srm
+system=snes
+game=super_metroid
+remote_device=my-deck
+remote_timestamp=2026-03-12T13:00:00Z
+local_device=my-brick
+local_timestamp=2026-03-12T14:30:00Z
+status=unresolved
+active_version=remote
 ```
 
-**Action submenu (shown when A is pressed on a conflict):**
+**Implementation:**
+1. Read `$repo_dir/$repo_path.conflict` — parse each JSON field with `grep` + `sed` (same pattern used by `ch_resolve`'s `keep_newest` branch).
+2. Derive `system` from path: everything before the first `/`.
+3. Derive `game` from path: filename without `.srm` extension.
+4. Determine `active_version` by checking the marker file `$repo_dir/.continuity/trying/$marker_name` (see `ch_try_version`). If no marker exists, default is `remote` (the canonical file holds the remote version after conflict detection).
+5. Output `status` from the `.conflict` JSON (currently always `unresolved` for active conflicts).
 
-```
-┌──────────────────────────┐
-│  Super Metroid            │
-│                           │
-│  ► Try Mine               │
-│    Try Theirs             │
-│    ──────                 │
-│    Keep Mine              │
-│    Keep Theirs            │
-│    Keep Newest            │
-│    ──────                 │
-│    Cancel                 │
-│                           │
-│  A: Select  B: Back       │
-└──────────────────────────┘
-```
+**Returns:** 0 on success, 1 if `.conflict` file doesn't exist or is unparseable.
 
-- **Try Mine / Try Theirs:** Copies the selected version to the device save path. Does NOT resolve the conflict. The user can exit the resolver, launch the game to test the save, then come back and resolve.
-- **Keep Mine / Keep Theirs / Keep Newest:** Calls `ch_resolve` via `system()`, then rescans the conflict list. Shows a brief "Resolved!" confirmation.
-- **Cancel:** Dismisses the submenu, returns to the conflict list.
+**Output format rationale:** Key-value lines are trivially parseable in any language:
+- Shell: `value=$(echo "$output" | grep '^key=' | sed 's/^key=//')`
+- C: `sscanf(line, "key=%s", value)` or `strtok`
+- Java/Kotlin: `line.split("=", 2)`
+- No JSON production needed (avoids fragile shell JSON generation without `jq`)
 
 ---
 
-### Shell Helper Script (`src/platforms/nextui/resolve.sh`)
+#### `ch_list_conflicts_detailed` — List all conflicts with full metadata
 
-The binary calls this script via `system()` to perform conflict operations. This keeps all git/PAL logic in shell where it belongs, and the binary stays a pure UI layer.
+**Signature:** `ch_list_conflicts_detailed <repo_dir>`
 
-```sh
-#!/bin/sh
-# resolve.sh — shell helper for resolve.elf
-# Usage:
-#   resolve.sh try <repo_dir> <file> <version> <saves_root> <core_dir> <pal_path>
-#   resolve.sh resolve <repo_dir> <file> <resolution> <saves_root> <core_dir> <pal_path>
+**Output:** Multiple `ch_get_conflict_info` blocks separated by blank lines:
+
+```
+file=snes/super_metroid.srm
+system=snes
+game=super_metroid
+remote_device=my-deck
+remote_timestamp=2026-03-12T13:00:00Z
+local_device=my-brick
+local_timestamp=2026-03-12T14:30:00Z
+status=unresolved
+active_version=remote
+
+file=gb/links_awakening.srm
+system=gb
+game=links_awakening
+remote_device=my-deck
+remote_timestamp=2026-03-12T11:00:00Z
+local_device=my-brick
+local_timestamp=2026-03-12T12:00:00Z
+status=unresolved
+active_version=local
 ```
 
-**`resolve.sh try`:**
-1. Source PAL and core modules (conflict_handler.sh, path_mapper.sh)
-2. Determine device save path via `pm_repo_to_local "$file"`
-3. If `version` is `"local"`:
-   - Find the `.local` file in `$repo_dir/` matching `$file.*.local`
-   - Copy it to the device save path
-4. If `version` is `"remote"`:
-   - Copy `$repo_dir/$file` to the device save path
-5. Exit 0 on success, 1 on error
+**Implementation:**
+1. Call `ch_list_conflicts "$repo_dir"` to get `.conflict` file paths.
+2. For each, strip `.conflict` suffix to get `repo_path`.
+3. Call `ch_get_conflict_info "$repo_dir" "$repo_path"`.
+4. Print a blank line between entries.
 
-**`resolve.sh resolve`:**
-1. Source PAL and core modules
-2. Call `ch_resolve "$repo_dir" "$file" "$resolution"`
-3. If successful, copy the resolved canonical file to the device save path
-4. Exit with `ch_resolve`'s return code
-
-The binary reads the exit code to determine success/failure and displays appropriate feedback.
+**Returns:** 0 always. Empty output if no conflicts.
 
 ---
 
-### SDL2 Rendering Details
+#### `ch_count_conflicts` — Count unresolved conflicts
 
-**Display strategy:** The resolver does NOT link against NextUI's `api.o` / `libminui`. It uses SDL2 directly (`SDL_Init`, `SDL_CreateWindow`, `SDL_GetWindowSurface`, `SDL_ttf`). Reasons:
+**Signature:** `ch_count_conflicts <repo_dir>`
 
-1. NextUI's GFX API is tightly coupled to the launcher's lifecycle (it assumes it owns the display)
-2. Tool PAKs like `battery.elf` and `clock.elf` each have their own SDL2 init — there's no shared library
-3. Direct SDL2 is simpler to build and test on desktop Linux during development
+**Output:** A single integer to stdout (e.g., `3`). Prints `0` if no conflicts.
 
-**Font:** Use an embedded TTF font compiled into the binary as a C array (same pattern as `show2.elf` which embeds `RoundedMplus1c_Bold_reduced_ttf`). The font file can be copied from NextUI's assets or a permissively-licensed alternative.
+**Implementation:** Count lines from `ch_list_conflicts`.
 
-**Screen layout at 1024x768 (TrimUI Brick):**
-
-```
-┌─────────────────────────────────────────┐  y=0
-│                                         │
-│   Save Conflicts (2)                    │  y=30  — header, FONT_LARGE (16pt scaled)
-│                                         │
-├─────────────────────────────────────────┤  y=80  — list starts
-│                                         │
-│   ► SNES · Super Metroid                │  row 0, selected (highlight pill)
-│     mine (my-brick) · Mar 12, 2:30 PM   │
-│     theirs (my-deck) · Mar 12, 1:00 PM  │
-│     testing: mine                       │
-│                                         │
-│     GB · Links Awakening                │  row 1
-│     mine (my-brick) · Mar 12, 3:00 PM   │
-│     theirs (my-deck) · Mar 12, 2:00 PM  │
-│                                         │
-├─────────────────────────────────────────┤  y=700 — footer
-│   Ⓐ Actions   Ⓑ Exit                  │
-└─────────────────────────────────────────┘  y=768
-```
-
-**Colors (matching NextUI dark theme):**
-- Background: black (`0x000000`)
-- Text: light gray (`0xCCCCCC`)
-- Selected row highlight: dark gray pill (`0x262626`)
-- Header text: white (`0xFFFFFF`)
-- "mine" label: slightly brighter to distinguish from "theirs"
-- Footer hint text: mid-gray (`0x999999`)
-
-**Scrolling:** If more conflicts than fit on screen (~5 rows at this layout density), the list scrolls. Cursor wraps at top/bottom.
-
-**Input polling:** Use `SDL_PollEvent` directly to read joystick button events. Button mappings from `platform.h`:
-- D-pad Up/Down: `JOY_AXIS` or button events for `BTN_UP` / `BTN_DOWN`
-- A button: `JOY_A = 1` (confirm)
-- B button: `JOY_B = 0` (cancel/back)
-
-The input system reads from `/dev/input/event*` via SDL2's joystick subsystem. On desktop Linux (for testing), keyboard arrows + Enter/Escape are mapped as fallbacks.
+**Returns:** 0 always.
 
 ---
 
-### PAK Structure
+#### `ch_try_version` — Swap a save version into the device's active slot
 
-The PAK is delivered at `/mnt/SDCARD/Tools/tg5040/Continuity.pak/`:
+**Signature:** `ch_try_version <repo_dir> <repo_path> <version>`
 
-```
-Continuity.pak/
-├── launch.sh              ← invokes resolve.elf with correct paths
-├── resolve.elf            ← compiled conflict resolver (ARM)
-├── resolve.sh             ← shell helper for try/resolve operations
-├── bin/
-│   └── git                ← statically-linked git binary (from Sprint 0.3)
-├── config/
-│   └── platform_maps/
-│       └── nextui.json    ← platform map (from Sprint 0.2)
-└── src/
-    └── core/              ← bundled core shell modules
-        ├── conflict_handler.sh
-        ├── sync_engine.sh
-        ├── cold_start.sh
-        └── path_mapper.sh
-```
+**Parameters:**
+- `repo_dir` — absolute path to the repo working copy
+- `repo_path` — canonical repo-relative `.srm` path
+- `version` — `remote` or `local`
 
-**`launch.sh`:**
+**Behavior:**
+1. Validate that a `.conflict` file exists for `repo_path`. Return 1 if not.
+2. Validate that `version` is `remote` or `local`. Return 1 if not.
+3. Determine the device save path via `pm_repo_to_local "$repo_path"`. Return 1 if path mapping fails.
+4. If `version` is `remote`:
+   - Source file: `$repo_dir/$repo_path` (the canonical `.srm`)
+   - Copy to device save path.
+5. If `version` is `local`:
+   - Find the `.local` file: `$repo_dir/$repo_path.$device_name.local` where `$device_name` is extracted from `ch_list_local_files` output for this `repo_path`. If multiple `.local` files exist (future multi-device scenario), use the first match.
+   - Copy to device save path.
+6. Write a marker file at `$repo_dir/.continuity/trying/$marker_name` containing the `version` string. The marker name is derived from the repo path: replace `/` with `_` (e.g., `snes/super_metroid.srm` → `snes_super_metroid.srm`).
+7. Log via `pal_log "info"`.
 
-```sh
-#!/bin/sh
-cd "$(dirname "$0")"
+**Output:** Prints the device save path to stdout (useful for UI feedback: "Swapped save at /mnt/SDCARD/Saves/SFC/super_metroid.srm").
 
-REPO_DIR="/mnt/SDCARD/Saves/.continuity_repo"
-SAVES_ROOT="/mnt/SDCARD/Saves"
-DEVICE_NAME=$(cat "$REPO_DIR/.continuity/device_name" 2>/dev/null || printf "unknown")
+**Returns:** 0 on success, 1 on error.
 
-./resolve.elf \
-    --repo-dir "$REPO_DIR" \
-    --saves-dir "$SAVES_ROOT" \
-    --device-name "$DEVICE_NAME" \
-    --core-dir "$(pwd)/src/core" \
-    --pal-path "$(pwd)/pal_nextui.sh"
-```
+**Safety:**
+- Only copies files to the device save directory — no repo modifications, no commits, no git operations.
+- The canonical `.srm` and `.local` file in the repo are never touched.
+- The user can swap back and forth freely — each try just overwrites the device save file.
 
-**Note:** This sprint focuses on the resolver binary and shell helper. The full PAK packaging (bundling git, core modules, platform PAL) is Sprint 1.2's concern. For Sprint 0.9, the binary and shell helper are built and tested in the repo; the PAK structure above is the target layout, not something this sprint assembles.
+**Marker directory:** `$repo_dir/.continuity/trying/` is created on first use. It is NOT committed to git — it's local device state only (the `.continuity/` directory is already in the repo, but `trying/` is added to `.gitignore`). Different devices can independently try different versions without interfering.
 
 ---
 
-### Build System
+#### `ch_get_active_version` — Check which version is in the device's active slot
 
-**Makefile:** `src/platforms/nextui/Makefile`
+**Signature:** `ch_get_active_version <repo_dir> <repo_path>`
 
-```makefile
-# Cross-compilation for TrimUI Brick (ARM)
-CROSS_COMPILE ?= arm-linux-gnueabihf-
-CC = $(CROSS_COMPILE)gcc
-CFLAGS = -Wall -Wextra -O2 $(shell sdl2-config --cflags)
-LDFLAGS = $(shell sdl2-config --libs) -lSDL2_ttf
+**Output:** Prints `remote` or `local` to stdout.
 
-# Native build for desktop testing
-.PHONY: native
-native: CC = gcc
-native: resolve.elf
+**Implementation:**
+1. Compute the marker name (same derivation as `ch_try_version`).
+2. Read `$repo_dir/.continuity/trying/$marker_name`.
+3. If marker exists and contains `local` or `remote`, print that value.
+4. If no marker exists, print `remote` (the default state after conflict detection — the canonical file holds the remote version).
 
-resolve.elf: resolve.c embedded_font.h
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-
-# Generate embedded font header from TTF file
-embedded_font.h: font.ttf
-	xxd -i $< > $@
-```
-
-**Desktop testing:** `make native` builds for the host architecture using the system's SDL2. Developers can run `./resolve.elf --repo-dir /tmp/test-repo ...` on desktop Linux to test the UI with keyboard input before cross-compiling for ARM.
-
-**CI:** The native build runs in CI. The ARM cross-build requires a cross-compilation toolchain (deferred to Sprint 1.2's packaging work). Sprint 0.9's CI validates that the C code compiles and the desktop binary works with the test fixtures.
+**Returns:** 0 always.
 
 ---
 
-## Integration with Sprint 1.2
+#### `ch_clear_try_markers` — Clean up all try markers
 
-Sprint 1.2 (NextUI Tool PAK) will wrap this resolver into a larger tool with:
-- Status display (last sync, pending changes, linked devices)
-- Manual sync trigger
-- Conflict resolution (this sprint's binary, possibly integrated into a larger `continuity.elf`)
-- Device unlinking
+**Signature:** `ch_clear_try_markers <repo_dir>`
 
-This sprint's `resolve.elf` may become a standalone binary invoked by Sprint 1.2's `launch.sh`, or its code may be folded into a larger `continuity.elf`. Either path works — the conflict resolution logic is self-contained.
+**Behavior:** Remove all files in `$repo_dir/.continuity/trying/`. Called after all conflicts are resolved, or when the UI exits.
+
+**Returns:** 0 always.
+
+---
+
+### Changes to Existing Functions
+
+#### `ch_resolve` — Add device save update
+
+Currently, `ch_resolve` resolves the conflict in the repo (commits the winner) but does NOT update the device save file. The device might still have a stale "try" version in its save slot.
+
+**Change:** After successful resolution, copy the winning canonical `.srm` to the device save path via `pm_repo_to_local`. Also remove the try marker for this save.
+
+This is a small but important addition: after resolution, the device's active save matches the resolved winner, and the try marker is cleaned up.
+
+**Modified behavior in `ch_resolve`:**
+```
+# After successful commit (in keep_remote and keep_local branches):
+local device_path
+device_path=$(pm_repo_to_local "$repo_path" 2>/dev/null) || true
+if [ -n "$device_path" ] && [ -d "$(dirname "$device_path")" ]; then
+    cp "$repo_dir/$repo_path" "$device_path"
+fi
+
+# Clean up try marker
+local marker_name
+marker_name=$(printf '%s' "$repo_path" | sed 's|/|_|g')
+rm -f "$repo_dir/.continuity/trying/$marker_name"
+```
+
+**Why conditional:** `pm_repo_to_local` may fail if the platform map isn't loaded (e.g., in a test environment that only tests repo-level logic). The device save update is best-effort — the resolution itself (repo commit) is the critical path.
+
+---
+
+### `.gitignore` Update
+
+Add `trying/` to the repo's `.continuity/.gitignore` (or the repo-level `.gitignore`) so try markers are never committed:
+
+```
+.continuity/trying/
+```
+
+This is written by `ch_try_version` on first use if not already present.
+
+---
+
+## Output Format Specification
+
+The key-value output format is a contract that platform UIs depend on. It must be stable.
+
+**Rules:**
+1. One key-value pair per line, format `key=value`.
+2. Keys are `snake_case`, ASCII only.
+3. Values are UTF-8, may contain any character except newline.
+4. No quoting of values (no `key="value"`) — the first `=` is the delimiter.
+5. Blocks are separated by exactly one blank line.
+6. Unknown keys should be ignored by consumers (forward compatibility).
+
+**Defined keys for `ch_get_conflict_info`:**
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `file` | string | Canonical repo-relative `.srm` path |
+| `system` | string | Canonical system name (derived from path) |
+| `game` | string | Game name without extension (derived from path) |
+| `remote_device` | string | Device name that pushed the remote version |
+| `remote_timestamp` | ISO-8601 | When the remote version was saved |
+| `local_device` | string | Device name that has the local version |
+| `local_timestamp` | ISO-8601 | When the local version was saved |
+| `status` | enum | `unresolved` (only value for active conflicts) |
+| `active_version` | enum | `remote` or `local` — which is in the device save slot |
 
 ---
 
@@ -326,18 +262,14 @@ This sprint's `resolve.elf` may become a standalone binary invoked by Sprint 1.2
 
 | Item | Sprint |
 |------|--------|
-| Full Tool PAK packaging (bundling git, core modules, PAL) | 1.2 |
-| Sync status display | 1.2 |
-| Manual sync trigger | 1.2 |
-| Device unlinking UI | 1.2 |
-| ARM cross-compilation toolchain setup | 1.2 |
-| Daemon auto-launch of resolver on conflict | 1.1 |
-| show2.elf notification for conflicts (if daemon doesn't launch resolver) | 1.1 |
+| NextUI SDL2 conflict resolution binary | 1.2 |
 | RetroDeck conflict resolution UI | 2.2 |
 | Android conflict resolution UI | 3.2 |
-| Multi-device `.local` selection (pick which device's save in 3+ device conflict) | 1.2 |
+| Daemon auto-launch of conflict UI on boot | 1.1 |
+| `show2.elf` notification for conflicts | 1.1 |
+| Multi-device `.local` selection (3+ device conflicts) | 1.2 |
 | Save file preview / hex dump | post-1.0 |
-| Animated transitions between screens | never |
+| JSON output format (alternative to key-value) | future, if needed |
 
 ---
 
@@ -347,183 +279,240 @@ This sprint's `resolve.elf` may become a standalone binary invoked by Sprint 1.2
 
 | File | Purpose |
 |------|---------|
-| `src/platforms/nextui/resolve.c` | Conflict resolver SDL2 binary — display, input, delegates to shell |
-| `src/platforms/nextui/resolve.sh` | Shell helper: `try` and `resolve` commands, sources PAL + core modules |
-| `src/platforms/nextui/Makefile` | Build system for native and cross-compiled `resolve.elf` |
-| `src/platforms/nextui/embedded_font.h` | Auto-generated embedded font data (from TTF via `xxd`) |
-| `tests/unit/platforms/nextui/test_resolve_shell.sh` | Unit tests for `resolve.sh` try/resolve commands |
-| `tests/integration/test_resolve_flow.sh` | Integration test: set up conflicts, invoke resolver operations, verify results |
+| `tests/unit/core/test_conflict_ops.sh` | Unit tests for all new `ch_*` functions |
+| `tests/integration/test_conflict_resolution_flow.sh` | Integration test: full try → test → resolve lifecycle |
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `docs/design/architecture.md` | Add Conflict Resolution UI section describing the on-device binary approach |
+| `src/core/conflict_handler.sh` | Add `ch_get_conflict_info`, `ch_list_conflicts_detailed`, `ch_count_conflicts`, `ch_try_version`, `ch_get_active_version`, `ch_clear_try_markers`. Modify `ch_resolve` to update device save and clean try marker. |
+| `docs/design/architecture.md` | Add Conflict Resolution Operations section describing the interactive workflow and output format |
 
 ### Directories Created
 
 | Directory | Purpose |
 |-----------|---------|
-| `tests/unit/platforms/` | Platform-specific unit tests (new directory tree) |
-| `tests/unit/platforms/nextui/` | NextUI platform unit tests |
+| (none — `$repo_dir/.continuity/trying/` is created at runtime) | |
 
 ---
 
 ## Acceptance Criteria
 
-### Conflict Scanning and Parsing
+### `ch_get_conflict_info`
 
-1. `resolve.elf` scans the repo directory and finds all `.conflict` files (excluding `.git/`).
-2. For each `.conflict` file, parses `file`, `remote_device`, `remote_timestamp`, `local_device`, `local_timestamp` from the JSON.
-3. Derives `system_name` and `game_name` from the `file` path (e.g., `snes/super_metroid.srm` → `snes`, `super_metroid`).
-4. Handles repos with 0 conflicts gracefully (shows "No conflicts" message, exits after brief delay).
-5. Handles repos with up to `MAX_CONFLICTS` (32) conflicts.
+1. Given a valid `.conflict` file, prints all 9 key-value fields to stdout.
+2. `system` is correctly derived from the path (e.g., `snes/super_metroid.srm` → `system=snes`).
+3. `game` is correctly derived from the path (e.g., `snes/super_metroid.srm` → `game=super_metroid`).
+4. `active_version` defaults to `remote` when no try marker exists.
+5. `active_version` returns `local` after `ch_try_version` swaps to local.
+6. Returns 1 if no `.conflict` file exists for the given `repo_path`.
+7. Returns 1 if the `.conflict` file is missing required fields.
 
-### Display
+### `ch_list_conflicts_detailed`
 
-6. Renders a header showing the conflict count.
-7. Renders each conflict as a multi-line row showing system, game, both device names, and both timestamps.
-8. Highlights the currently selected row with a distinct background color.
-9. Shows a footer with button hints ("A: Actions  B: Exit").
-10. Scrolls the list when there are more conflicts than fit on screen.
-11. When a version is being tested (after "Try"), the row shows which version is active.
+8. Returns empty output (no lines) when no conflicts exist.
+9. Returns one block per conflict, separated by blank lines.
+10. Each block contains all 9 key-value fields.
+11. Multiple conflicts are all present in the output.
 
-### Input Handling
+### `ch_count_conflicts`
 
-12. D-pad Up/Down moves the cursor through the conflict list.
-13. A button opens the action submenu for the selected conflict.
-14. B button exits the program (returns to NextUI Tools menu).
-15. In the action submenu: D-pad Up/Down navigates options, A selects, B cancels back to list.
-16. On desktop Linux (native build), keyboard arrow keys + Enter/Escape work as equivalents.
+12. Prints `0` when no conflicts exist.
+13. Prints the correct count when conflicts exist (tested with 1, 2, and 3 conflicts).
 
-### Action Submenu
+### `ch_try_version` — remote
 
-17. "Try Mine" copies the `.local` file to the device save path via `resolve.sh try`.
-18. "Try Theirs" copies the canonical (remote) `.srm` to the device save path via `resolve.sh try`.
-19. After a try operation, the conflict row updates to show which version is active.
-20. "Keep Mine" calls `resolve.sh resolve` with `keep_local`, removes the conflict from the list on success.
-21. "Keep Theirs" calls `resolve.sh resolve` with `keep_remote`, removes the conflict from the list on success.
-22. "Keep Newest" calls `resolve.sh resolve` with `keep_newest`, removes the conflict from the list on success.
-23. If `resolve.sh resolve` returns non-zero, the UI shows a brief error message and does not remove the conflict.
-24. After all conflicts are resolved, shows "All conflicts resolved!" and exits after a brief delay.
+14. Copies the canonical `.srm` (remote version) to the device save path.
+15. After try, device save file byte-matches the repo's canonical `.srm` (verified via `cmp -s`).
+16. Writes a try marker containing `remote`.
+17. Prints the device save path to stdout.
+18. Does NOT modify the repo — no new git commits after the operation.
 
-### `resolve.sh try`
+### `ch_try_version` — local
 
-25. Sources PAL and core modules correctly.
-26. Determines the device save path via `pm_repo_to_local`.
-27. When `version=local`: finds the `.local` file and copies it to the device save path.
-28. When `version=remote`: copies the canonical `.srm` from the repo to the device save path.
-29. Does not modify the repo (no commits, no git operations).
-30. Returns 0 on success, 1 on error.
+19. Copies the `.local` file to the device save path.
+20. After try, device save file byte-matches the `.local` file (verified via `cmp -s`).
+21. Writes a try marker containing `local`.
+22. Prints the device save path to stdout.
+23. Does NOT modify the repo — no new git commits after the operation.
 
-### `resolve.sh resolve`
+### `ch_try_version` — validation
 
-31. Sources PAL and core modules correctly.
-32. Calls `ch_resolve` with the given resolution (`keep_local`, `keep_remote`, or `keep_newest`).
-33. After successful resolution, copies the resolved canonical `.srm` to the device save path.
-34. Returns `ch_resolve`'s exit code.
+24. Returns 1 if no `.conflict` file exists for the given `repo_path`.
+25. Returns 1 if `version` is not `remote` or `local`.
+26. Returns 1 if `pm_repo_to_local` fails (unknown system in platform map).
 
-### Build
+### `ch_try_version` — idempotency
 
-35. `make native` produces a working `resolve.elf` on desktop Linux (x86_64).
-36. The native binary runs correctly with a test repo and keyboard input.
-37. `resolve.c` compiles with `-Wall -Wextra` and no warnings.
-38. The Makefile supports `CROSS_COMPILE` variable for ARM cross-compilation (structure only — actual cross-compile is Sprint 1.2).
+27. Calling `ch_try_version` twice with `local` produces the same result — device save has local bytes.
+28. Swapping from `local` to `remote` and back to `local` leaves device save with local bytes.
 
-### Shell Code Quality
+### `ch_get_active_version`
 
-39. `resolve.sh` passes `shellcheck` with no errors.
-40. `resolve.sh` passes `busybox ash -n` syntax check.
-41. No banned BusyBox ash constructs used.
-42. All variable expansions are quoted.
-43. All tests pass under `busybox ash`.
+29. Returns `remote` when no try marker exists (default state).
+30. Returns `local` after `ch_try_version ... local`.
+31. Returns `remote` after `ch_try_version ... remote`.
 
-### C Code Quality
+### `ch_clear_try_markers`
 
-44. No compiler warnings with `-Wall -Wextra`.
-45. No buffer overflows — all string operations use bounded copies (`snprintf`, `strncpy`).
-46. All `system()` calls construct the command string safely (no user-controlled input injected without validation).
-47. SDL2 resources are properly cleaned up on exit.
-48. Program handles missing repo directory gracefully (error message, exit 1).
+32. Removes all files in `$repo_dir/.continuity/trying/`.
+33. Returns 0 even if no markers exist (idempotent).
+34. After clearing, `ch_get_active_version` returns `remote` for all conflicts.
+
+### `ch_resolve` — device save update (modified behavior)
+
+35. After `ch_resolve ... keep_remote`: device save file contains the remote version's bytes.
+36. After `ch_resolve ... keep_local`: device save file contains the local version's bytes.
+37. After `ch_resolve ... keep_newest`: device save file contains the winning version's bytes.
+38. After resolution, the try marker for the resolved save is removed.
+39. If `pm_repo_to_local` fails (e.g., platform map not loaded), resolution still succeeds — device save update is best-effort.
+
+### `.gitignore`
+
+40. `ch_try_version` creates `.continuity/trying/` directory if it doesn't exist.
+41. Try markers are never committed to git (verified: `git status` doesn't show them as untracked after `.gitignore` update).
+
+### Code Quality
+
+42. All new code passes `shellcheck` with no errors.
+43. All new code passes `busybox ash -n` syntax check.
+44. No banned BusyBox ash constructs (see CLAUDE.md table).
+45. All variable expansions are quoted.
+46. All new functions use `printf` for output, not `echo`.
+47. All tests pass under `busybox ash`.
+48. Test files pass `shellcheck` and `busybox ash -n`.
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests (`tests/unit/platforms/nextui/test_resolve_shell.sh`)
+### Unit Tests (`tests/unit/core/test_conflict_ops.sh`)
 
-Tests for `resolve.sh` — the shell helper that the binary calls. Each test creates a fresh `TEST_TMPDIR`, sets up a repo with conflict artifacts, and verifies try/resolve behavior.
+Each test creates a fresh `TEST_TMPDIR` with a minimal repo containing conflict artifacts (`.conflict` JSON + `.local` file + canonical `.srm`) and a mock device saves directory.
 
-**`resolve.sh try` tests:**
+**Test setup helper** (shared across tests):
+```
+create_test_conflict <repo_dir> <repo_path> <local_device> <remote_device>
+```
+Creates the canonical `.srm`, a `.local` file with different bytes, and a `.conflict` JSON.
 
-- Set up a conflict for `snes/super_metroid.srm`. Call `resolve.sh try ... local`. Assert device save path contains the `.local` file's bytes.
-- Call `resolve.sh try ... remote`. Assert device save path contains the canonical `.srm` bytes.
-- Call `resolve.sh try` with a nonexistent file. Assert returns 1.
-- Verify no git commits are made after a try operation.
-- Swap to local, then swap to remote, then swap to local again. Assert each swap puts the correct bytes in place.
+**`ch_get_conflict_info` tests:**
 
-**`resolve.sh resolve` tests:**
+- Parse valid `.conflict` file → verify all 9 fields present and correct.
+- Verify `system` and `game` derivation for multi-segment paths (e.g., `snes/super_metroid.srm`).
+- Missing `.conflict` file → returns 1.
+- `active_version` is `remote` with no try marker.
+- `active_version` is `local` after writing a try marker.
 
-- Set up a committed conflict state. Call `resolve.sh resolve ... keep_remote`. Assert returns 0. Assert canonical `.srm` has remote bytes. Assert `.local` and `.conflict` files are gone. Assert device save path has remote bytes.
-- Same for `keep_local` — assert canonical now has local bytes.
-- Same for `keep_newest` — assert resolution matches the newer timestamp.
-- Call with invalid resolution string. Assert returns 1.
-- Call with nonexistent conflict. Assert returns 1.
+**`ch_list_conflicts_detailed` tests:**
 
-### Integration Test (`tests/integration/test_resolve_flow.sh`)
+- No conflicts → empty output.
+- One conflict → one block with all fields.
+- Two conflicts → two blocks separated by blank line.
+- Verify field values match the underlying `.conflict` files.
 
-End-to-end test that simulates the full conflict lifecycle without the SDL2 UI (tests the data layer only). Uses the same two-device simulation pattern as Sprint 0.8's integration test.
+**`ch_count_conflicts` tests:**
+
+- No conflicts → prints `0`.
+- One conflict → prints `1`.
+- Three conflicts → prints `3`.
+
+**`ch_try_version` tests:**
+
+- Try `remote`: device save byte-matches canonical `.srm`.
+- Try `local`: device save byte-matches `.local` file.
+- Try with nonexistent conflict → returns 1.
+- Try with invalid version → returns 1.
+- Try with unmapped system → returns 1.
+- No git commits after try (count commits before and after).
+- Try marker written correctly.
+- Swap local → remote → local: final device save matches `.local` bytes.
+
+**`ch_get_active_version` tests:**
+
+- No marker → prints `remote`.
+- After try local → prints `local`.
+- After try remote → prints `remote`.
+
+**`ch_clear_try_markers` tests:**
+
+- Clear with markers → directory empty.
+- Clear with no markers → returns 0.
+- After clear, `ch_get_active_version` returns `remote`.
+
+**`ch_resolve` device save update tests:**
+
+- Resolve `keep_remote` → device save has remote bytes, try marker removed.
+- Resolve `keep_local` → device save has local bytes, try marker removed.
+- Resolve with no platform map loaded → resolution still succeeds (device save update skipped).
+
+### Integration Test (`tests/integration/test_conflict_resolution_flow.sh`)
+
+Full lifecycle test simulating the user experience across the operations layer.
 
 **Setup:**
 1. Create bare remote, two working clones (device-a, device-b).
-2. Create diverged state, run `ch_handle_pull_conflict` to produce conflict artifacts.
-3. Create a mock saves directory structure.
+2. Both devices modify the same `.srm` file with different bytes.
+3. Device-a pushes first. Device-b pulls → `se_pull` returns 1 (diverged).
+4. `ch_handle_pull_conflict` preserves both versions.
+5. Create mock device saves directory with platform map loaded.
 
-**Scenario 1: Try and resolve flow**
+**Scenario 1: Browse → Try → Resolve**
 
-1. Verify conflict artifacts exist in the repo.
-2. Call `resolve.sh try ... local`. Verify device save has local bytes.
-3. Call `resolve.sh try ... remote`. Verify device save has remote bytes.
-4. Call `resolve.sh resolve ... keep_local`. Verify conflict resolved, device save has local bytes, artifacts cleaned up.
+1. `ch_count_conflicts` → prints `1`.
+2. `ch_list_conflicts_detailed` → one block with correct metadata.
+3. `ch_get_active_version` → `remote` (default).
+4. `ch_try_version ... local` → device save has device-b's bytes.
+5. `ch_get_active_version` → `local`.
+6. `ch_try_version ... remote` → device save has device-a's bytes.
+7. `ch_get_active_version` → `remote`.
+8. `ch_try_version ... local` → swap back.
+9. `ch_resolve ... keep_local` → conflict resolved, device save has local bytes.
+10. `ch_count_conflicts` → prints `0`.
+11. `ch_get_active_version` → `remote` (marker cleared, default state).
 
-**Scenario 2: Multiple conflicts**
+**Scenario 2: Resolve without trying (keep_newest)**
+
+1. Set up a new conflict where local timestamp is newer.
+2. `ch_resolve ... keep_newest` → resolves to local version.
+3. Device save has local bytes.
+4. No try markers left behind.
+
+**Scenario 3: Multiple conflicts**
 
 1. Set up two conflicts (`snes/zelda.srm` and `gb/links_awakening.srm`).
-2. Resolve each via `resolve.sh resolve ... keep_newest`.
-3. Verify both resolved, both device saves updated.
-
-**Scenario 3: Conflict scanning (binary data layer)**
-
-1. Create 3 `.conflict` files in the repo with valid JSON.
-2. The binary's scanning logic is tested via a small C test harness (`test_scan.c`) that calls the same scanning function and prints the parsed results.
-3. Verify all 3 conflicts are found with correct metadata.
-
-### Native Binary Smoke Test
-
-A shell script that:
-1. Builds `resolve.elf` natively (`make native`)
-2. Sets up a test repo with conflicts
-3. Launches `resolve.elf` with `--headless` flag (renders one frame to verify no crash, then exits)
-4. Verifies exit code 0
-
-The `--headless` flag is a test-only mode: initializes SDL2 with `SDL_VIDEODRIVER=dummy`, renders one frame, dumps the conflict count to stdout, and exits. This allows CI to verify the binary works without a display.
+2. `ch_count_conflicts` → `2`.
+3. `ch_list_conflicts_detailed` → two blocks.
+4. Try one conflict, resolve it. `ch_count_conflicts` → `1`.
+5. Resolve the other. `ch_count_conflicts` → `0`.
+6. `ch_clear_try_markers` → clean exit.
 
 ---
 
-## Resolved Questions
+## Definition of Done
 
-1. **Platform-specific or core?** **Resolved — platform-specific.** The compiled binary is NextUI-specific (SDL2, ARM, PAK structure). It goes under `src/platforms/nextui/`, not `src/core/`. The shell helper `resolve.sh` is also platform-specific because it sources the platform PAL. The core conflict handler logic remains in `src/core/conflict_handler.sh` where it belongs — this sprint only builds a UI layer on top of it.
-
-2. **Link against NextUI's api.o or use SDL2 directly?** **Resolved — SDL2 directly.** NextUI's GFX/PAD API is internal to the launcher and not exposed as a shared library. All existing Tool PAKs (settings.elf, battery.elf, etc.) statically compile their own copy of the needed API source files. For this sprint, using SDL2 directly is simpler and avoids coupling to NextUI's internal build system. If Sprint 1.2 builds a larger `continuity.elf` that needs deeper NextUI integration, it can pull in the API sources at that point.
-
-3. **C or C++?** **Resolved — C, with C++ acceptable if needed.** The resolver is a simple scrollable list with actions — no need for STL containers, templates, or RAII. Plain C with SDL2 keeps it minimal. If linking against system libraries on the device requires C++ linkage (some ARM toolchains bundle SDL2 with C++ deps), C++ compilation is fine, but the code stays procedural.
+- [ ] `ch_get_conflict_info` implemented and tested — parses `.conflict` JSON, outputs key-value format.
+- [ ] `ch_list_conflicts_detailed` implemented and tested — aggregates info for all conflicts.
+- [ ] `ch_count_conflicts` implemented and tested.
+- [ ] `ch_try_version` implemented and tested — swaps save version to device, writes marker, no repo changes.
+- [ ] `ch_get_active_version` implemented and tested — reads try marker.
+- [ ] `ch_clear_try_markers` implemented and tested.
+- [ ] `ch_resolve` modified — updates device save and cleans try marker after resolution.
+- [ ] `.continuity/trying/` added to `.gitignore` by `ch_try_version`.
+- [ ] Key-value output format documented in architecture.md.
+- [ ] All shell code passes `shellcheck` and `busybox ash -n`.
+- [ ] No banned BusyBox ash constructs.
+- [ ] All unit tests pass under `busybox ash`.
+- [ ] Integration test passes under `busybox ash`.
+- [ ] Sprint summary written to `docs/sprints/sprint-0.9-summary.md` on completion.
 
 ---
 
 ## Open Questions
 
-1. **Font source.** NextUI's `show2.elf` embeds `RoundedMplus1c_Bold_reduced_ttf` (the same font used across the system). Should we extract and reuse this font (it's SIL Open Font License), or bundle a different permissively-licensed font? Using the same font ensures visual consistency with the rest of NextUI.
+1. **Marker filename derivation.** The spec uses `sed 's|/|_|g'` to convert `snes/super_metroid.srm` → `snes_super_metroid.srm`. This is simple and reversible, but could collide if someone had both `a/b.srm` and `a_b.srm` (astronomically unlikely for game saves). Alternative: use a hash. Recommend keeping the simple approach — it's readable for debugging and the collision risk is negligible.
 
-2. **SDL2 `dummy` video driver in CI.** The `--headless` smoke test relies on `SDL_VIDEODRIVER=dummy` to run without a display. Verify this works in the CI environment (needs `libsdl2-dev` installed). If not, the smoke test can be skipped in CI and only run manually.
+2. **`pm_repo_to_local` dependency in `ch_try_version`.** This function requires the platform map to be loaded (`pm_load_platform_map` called). In test environments that don't set up a platform map, `ch_try_version` will fail at the path mapping step. The tests must either load a test platform map or mock `pm_repo_to_local`. The integration test should load a real platform map; unit tests can use a minimal test map.
 
-3. **`system()` latency.** Each try/resolve operation calls `system("./resolve.sh ...")`, which forks a shell, sources the PAL and core modules, runs the operation, and exits. On the TrimUI Brick's ARM CPU, this may take 0.5–2 seconds. The UI should show a "Working..." indicator during the operation. Confirm this latency is acceptable or consider pre-loading the shell environment.
+3. **`.continuity/trying/` and `.gitignore` management.** Should `ch_try_version` append to the repo's `.gitignore`, or should we expect the enrollment/cold-start process to set up `.gitignore` with all needed patterns? Recommend: `ch_try_version` creates `.continuity/trying/.gitignore` containing `*` (ignore everything in the directory), which is self-contained and doesn't require modifying the repo-level `.gitignore`.
