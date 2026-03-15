@@ -12,6 +12,7 @@
 #   sync_engine: se_stage_files(), se_commit(), se_push(), se_get_head_commit()
 #   change_detector: cd_detect_changes()
 #   cold_start: cs_store_commit()
+#   conflict_handler: ch_is_trying()
 
 # rp_find_candidates — find .srm files newer than the sentinel
 # Usage: rp_find_candidates <repo_dir>
@@ -46,6 +47,12 @@ rp_confirm_changes() {
         repo_path=$(pm_local_to_repo "$device_path" 2>/dev/null) || rc_map=$?
         if [ "$rc_map" -ne 0 ] || [ -z "$repo_path" ]; then
             pal_log "warn" "Poll confirm: unknown system dir, skipping: $device_path"
+            continue
+        fi
+
+        # Skip files in trying state (Sprint 0.9 safety gate)
+        if command -v ch_is_trying >/dev/null 2>&1 && ch_is_trying "$repo_dir" "$repo_path"; then
+            pal_log "info" "Poll confirm: skipping trying-state file: $repo_path"
             continue
         fi
 

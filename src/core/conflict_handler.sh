@@ -17,7 +17,11 @@
 #
 # Public functions: ch_handle_pull_conflict, ch_preserve_conflict,
 #                   ch_list_conflicts, ch_list_local_files,
-#                   ch_resolve, ch_resolve_all
+#                   ch_resolve, ch_resolve_all,
+#                   ch_get_conflict_info, ch_list_conflicts_detailed,
+#                   ch_count_conflicts, ch_try_version, ch_get_active_version,
+#                   ch_clear_try_markers, ch_is_trying, ch_is_trying_modified,
+#                   ch_promote_trying
 
 # ch_preserve_conflict — preserve local version of a conflicted save
 # Usage: ch_preserve_conflict <repo_dir> <repo_path> <device_name>
@@ -301,7 +305,19 @@ ch_resolve() {
             ;;
     esac
 
-    # Post-resolution: update last_known_commit and push (keep_remote/keep_local only)
+    # Post-resolution: update device save (best-effort)
+    local device_path_res
+    device_path_res=$(pm_repo_to_local "$repo_path" 2>/dev/null) || true
+    if [ -n "$device_path_res" ] && [ -d "$(dirname "$device_path_res")" ]; then
+        cp "$repo_dir/$repo_path" "$device_path_res" 2>/dev/null || true
+    fi
+
+    # Clean up try marker
+    local marker_name_res
+    marker_name_res=$(_ch_marker_name "$repo_path")
+    rm -f "$repo_dir/.continuity/trying/$marker_name_res"
+
+    # Update last_known_commit and push (keep_remote/keep_local only)
     local head_hash
     head_hash=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" rev-parse HEAD)
     cs_store_commit "$repo_dir" "$head_hash"
@@ -347,5 +363,360 @@ ch_resolve_all() {
     had_failure=$(cat "$fail_file")
     rm -f "$fail_file"
     [ -n "$had_failure" ] && return 1
+    return 0
+}
+
+# --- Sprint 0.9: Interactive Resolution Operations ---
+
+# _ch_marker_name — derive try marker filename from repo_path
+# Replaces / with _ (e.g., gb/pokemon_red.srm -> gb_pokemon_red.srm)
+_ch_marker_name() {
+    printf '%s' "$1" | sed 's|/|_|g'
+}
+
+# _ch_marker_path — full path to try marker for a repo_path
+_ch_marker_path() {
+    local repo_dir repo_path
+    repo_dir="$1"
+    repo_path="$2"
+    printf '%s/.continuity/trying/%s' "$repo_dir" "$(_ch_marker_name "$repo_path")"
+}
+
+# ch_is_trying — check if a save file is in trying state
+# Usage: ch_is_trying <repo_dir> <repo_path>
+# Returns: 0 if trying (marker exists), 1 if not
+ch_is_trying() {
+    local repo_dir repo_path
+    repo_dir="$1"
+    repo_path="$2"
+
+    [ -f "$(_ch_marker_path "$repo_dir" "$repo_path")" ]
+}
+
+# ch_is_trying_modified — detect the Pokémon scenario
+# Usage: ch_is_trying_modified <repo_dir> <repo_path>
+# Returns: 0 if trying AND modified since try, 1 otherwise
+ch_is_trying_modified() {
+    local repo_dir repo_path marker_file
+    repo_dir="$1"
+    repo_path="$2"
+    marker_file=$(_ch_marker_path "$repo_dir" "$repo_path")
+
+    [ -f "$marker_file" ] || return 1
+
+    local stored_checksum device_path current_checksum
+    stored_checksum=$(grep '^checksum=' "$marker_file" | sed 's/^checksum=//')
+    device_path=$(grep '^device_path=' "$marker_file" | sed 's/^device_path=//')
+
+    [ -z "$stored_checksum" ] && return 1
+    [ -z "$device_path" ] && return 1
+    [ -f "$device_path" ] || return 1
+
+    current_checksum=$(md5sum "$device_path" | cut -d' ' -f1)
+
+    [ "$current_checksum" != "$stored_checksum" ]
+}
+
+# ch_get_conflict_info — parse one conflict's metadata
+# Usage: ch_get_conflict_info <repo_dir> <repo_path>
+# Prints key-value pairs to stdout. Returns 0 on success, 1 on error.
+ch_get_conflict_info() {
+    local repo_dir repo_path
+    repo_dir="$1"
+    repo_path="$2"
+
+    local conflict_file
+    conflict_file="$repo_dir/$repo_path.conflict"
+
+    if [ ! -f "$conflict_file" ]; then
+        pal_log "warn" "ch_get_conflict_info: no .conflict for $repo_path"
+        return 1
+    fi
+
+    # Parse JSON fields
+    local remote_device remote_timestamp local_device local_timestamp status
+    remote_device=$(grep '"remote_device"' "$conflict_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
+    remote_timestamp=$(grep '"remote_timestamp"' "$conflict_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
+    local_device=$(grep '"local_device"' "$conflict_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
+    local_timestamp=$(grep '"local_timestamp"' "$conflict_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
+    status=$(grep '"status"' "$conflict_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
+
+    # Validate required fields
+    if [ -z "$remote_device" ] || [ -z "$local_device" ] || [ -z "$status" ]; then
+        pal_log "warn" "ch_get_conflict_info: missing fields in $conflict_file"
+        return 1
+    fi
+
+    # Derive system and game from path
+    local system game
+    system=$(printf '%s' "$repo_path" | sed 's|/.*||')
+    game=$(printf '%s' "$repo_path" | sed 's|.*/||; s|\.srm$||')
+
+    # Determine active_version and trying_modified
+    local active_version trying_modified
+    active_version="remote"
+    trying_modified="no"
+
+    if ch_is_trying "$repo_dir" "$repo_path"; then
+        local marker_file
+        marker_file=$(_ch_marker_path "$repo_dir" "$repo_path")
+        active_version=$(grep '^version=' "$marker_file" | sed 's/^version=//')
+        [ -z "$active_version" ] && active_version="remote"
+
+        if ch_is_trying_modified "$repo_dir" "$repo_path"; then
+            trying_modified="yes"
+        fi
+    fi
+
+    printf 'file=%s\n' "$repo_path"
+    printf 'system=%s\n' "$system"
+    printf 'game=%s\n' "$game"
+    printf 'remote_device=%s\n' "$remote_device"
+    printf 'remote_timestamp=%s\n' "$remote_timestamp"
+    printf 'local_device=%s\n' "$local_device"
+    printf 'local_timestamp=%s\n' "$local_timestamp"
+    printf 'status=%s\n' "$status"
+    printf 'active_version=%s\n' "$active_version"
+    printf 'trying_modified=%s\n' "$trying_modified"
+
+    return 0
+}
+
+# ch_list_conflicts_detailed — list all conflicts with full metadata
+# Usage: ch_list_conflicts_detailed <repo_dir>
+# Prints multiple ch_get_conflict_info blocks separated by blank lines.
+# Returns: 0 always
+ch_list_conflicts_detailed() {
+    local repo_dir
+    repo_dir="$1"
+
+    local conflicts
+    conflicts=$(ch_list_conflicts "$repo_dir")
+    [ -z "$conflicts" ] && return 0
+
+    local first
+    first=1
+    printf '%s\n' "$conflicts" | while IFS= read -r conflict_path; do
+        [ -z "$conflict_path" ] && continue
+        local repo_path
+        repo_path=$(printf '%s' "$conflict_path" | sed 's/\.conflict$//')
+
+        if [ "$first" -eq 1 ]; then
+            first=0
+        else
+            printf '\n'
+        fi
+        ch_get_conflict_info "$repo_dir" "$repo_path" 2>/dev/null || true
+    done
+    return 0
+}
+
+# ch_count_conflicts — count unresolved conflicts
+# Usage: ch_count_conflicts <repo_dir>
+# Prints a single integer to stdout. Returns: 0 always.
+ch_count_conflicts() {
+    local repo_dir
+    repo_dir="$1"
+
+    local conflicts
+    conflicts=$(ch_list_conflicts "$repo_dir")
+    if [ -z "$conflicts" ]; then
+        printf '0\n'
+    else
+        printf '%s\n' "$conflicts" | grep -c '.'
+    fi
+    return 0
+}
+
+# ch_try_version — swap a save version into the device's active slot
+# Usage: ch_try_version <repo_dir> <repo_path> <version>
+# version: remote or local
+# Prints the device save path to stdout. Returns: 0 on success, 1 on error.
+ch_try_version() {
+    local repo_dir repo_path version
+    repo_dir="$1"
+    repo_path="$2"
+    version="$3"
+
+    # Validate conflict exists
+    if [ ! -f "$repo_dir/$repo_path.conflict" ]; then
+        pal_log "error" "ch_try_version: no .conflict for $repo_path"
+        return 1
+    fi
+
+    # Validate version
+    case "$version" in
+        remote|local) ;;
+        *)
+            pal_log "error" "ch_try_version: invalid version '$version'"
+            return 1
+            ;;
+    esac
+
+    # Get device save path
+    local device_path
+    device_path=$(pm_repo_to_local "$repo_path" 2>/dev/null) || {
+        pal_log "error" "ch_try_version: pm_repo_to_local failed for $repo_path"
+        return 1
+    }
+
+    # Determine source file
+    local source_file
+    if [ "$version" = "remote" ]; then
+        source_file="$repo_dir/$repo_path"
+    else
+        # Try direct path first, fall back to glob
+        source_file="$repo_dir/$repo_path.$CONTINUITY_DEVICE_NAME.local"
+        if [ ! -f "$source_file" ]; then
+            source_file=$(find "$repo_dir/$(dirname "$repo_path")" \
+                -name "$(basename "$repo_path").*.local" \
+                ! -path "*/.git/*" \
+                2>/dev/null | head -1)
+        fi
+        if [ -z "$source_file" ] || [ ! -f "$source_file" ]; then
+            pal_log "error" "ch_try_version: no .local file for $repo_path"
+            return 1
+        fi
+    fi
+
+    # Ensure parent directory exists and copy
+    mkdir -p "$(dirname "$device_path")"
+    if ! cp "$source_file" "$device_path"; then
+        pal_log "error" "ch_try_version: cp failed to $device_path"
+        return 1
+    fi
+
+    # Compute checksum
+    local checksum
+    checksum=$(md5sum "$device_path" | cut -d' ' -f1)
+
+    # Create trying directory with .gitignore
+    local trying_dir
+    trying_dir="$repo_dir/.continuity/trying"
+    if [ ! -d "$trying_dir" ]; then
+        mkdir -p "$trying_dir"
+    fi
+    if [ ! -f "$trying_dir/.gitignore" ]; then
+        printf '*\n!.gitignore\n' > "$trying_dir/.gitignore"
+    fi
+
+    # Write marker
+    local marker_file
+    marker_file=$(_ch_marker_path "$repo_dir" "$repo_path")
+    printf 'version=%s\nchecksum=%s\ndevice_path=%s\n' "$version" "$checksum" "$device_path" \
+        > "$marker_file"
+
+    pal_log "info" "ch_try_version: copied $version of $repo_path to $device_path"
+    printf '%s\n' "$device_path"
+    return 0
+}
+
+# ch_get_active_version — check which version is in the device's active slot
+# Usage: ch_get_active_version <repo_dir> <repo_path>
+# Prints remote or local to stdout. Returns: 0 always.
+ch_get_active_version() {
+    local repo_dir repo_path marker_file
+    repo_dir="$1"
+    repo_path="$2"
+    marker_file=$(_ch_marker_path "$repo_dir" "$repo_path")
+
+    if [ -f "$marker_file" ]; then
+        local ver
+        ver=$(grep '^version=' "$marker_file" | sed 's/^version=//')
+        [ -n "$ver" ] && printf '%s\n' "$ver" && return 0
+    fi
+
+    printf 'remote\n'
+    return 0
+}
+
+# ch_clear_try_markers — clean up all try markers
+# Usage: ch_clear_try_markers <repo_dir>
+# Returns: 0 always
+ch_clear_try_markers() {
+    local repo_dir trying_dir
+    repo_dir="$1"
+    trying_dir="$repo_dir/.continuity/trying"
+
+    [ -d "$trying_dir" ] || return 0
+
+    find "$trying_dir" -maxdepth 1 -type f ! -name '.gitignore' -exec rm -f {} + 2>/dev/null || true
+    return 0
+}
+
+# ch_promote_trying — accept the modified trying version as the resolution
+# Usage: ch_promote_trying <repo_dir> <repo_path>
+# Returns: 0 on success, 1 on error
+ch_promote_trying() {
+    local repo_dir repo_path
+    repo_dir="$1"
+    repo_path="$2"
+
+    # Must be trying-modified
+    if ! ch_is_trying_modified "$repo_dir" "$repo_path"; then
+        pal_log "warn" "ch_promote_trying: not in trying-modified state for $repo_path"
+        return 1
+    fi
+
+    local marker_file device_path
+    marker_file=$(_ch_marker_path "$repo_dir" "$repo_path")
+    device_path=$(grep '^device_path=' "$marker_file" | sed 's/^device_path=//')
+
+    # Copy device save over canonical .srm in repo
+    if ! cp "$device_path" "$repo_dir/$repo_path"; then
+        pal_log "error" "ch_promote_trying: cp failed for $repo_path"
+        return 1
+    fi
+
+    # Remove .local file(s) and .conflict metadata
+    local srm_basename srm_dir local_files
+    srm_basename=$(basename "$repo_path")
+    srm_dir=$(dirname "$repo_path")
+    local_files=$(find "$repo_dir/$srm_dir" \
+        -name "$srm_basename.*.local" \
+        ! -path "*/.git/*" \
+        2>/dev/null)
+
+    "$CONTINUITY_GIT_BIN" -C "$repo_dir" add "$repo_path" 2>/dev/null
+
+    printf '%s\n' "$local_files" | while IFS= read -r lf; do
+        [ -z "$lf" ] && continue
+        local lf_rel
+        lf_rel=$(printf '%s' "$lf" | sed "s|^$repo_dir/||")
+        rm -f "$lf"
+        "$CONTINUITY_GIT_BIN" -C "$repo_dir" rm --cached "$lf_rel" >/dev/null 2>&1 || true
+    done
+
+    local conflict_meta
+    conflict_meta="$repo_dir/$repo_path.conflict"
+    rm -f "$conflict_meta"
+    "$CONTINUITY_GIT_BIN" -C "$repo_dir" rm --cached "$repo_path.conflict" >/dev/null 2>&1 || true
+
+    # Commit
+    if ! "$CONTINUITY_GIT_BIN" -C "$repo_dir" commit \
+        -m "resolve: promote modified trying version of $repo_path" >/dev/null 2>&1; then
+        pal_log "error" "ch_promote_trying: commit failed for $repo_path"
+        return 1
+    fi
+
+    # Push if online
+    if pal_is_online; then
+        local push_rc
+        push_rc=0
+        se_push "$repo_dir" || push_rc=$?
+        if [ "$push_rc" -eq 1 ]; then
+            pal_log "warn" "ch_promote_trying: push failed after promoting $repo_path"
+        fi
+    fi
+
+    # Update last_known_commit
+    local head_hash
+    head_hash=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" rev-parse HEAD)
+    cs_store_commit "$repo_dir" "$head_hash"
+
+    # Remove try marker
+    rm -f "$marker_file"
+
+    pal_log "info" "ch_promote_trying: promoted modified trying version of $repo_path"
     return 0
 }

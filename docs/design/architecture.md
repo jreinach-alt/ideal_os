@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-03-12
-**Last updated:** 2026-03-15 (Sprint 0.8 complete)
+**Last updated:** 2026-03-15 (Sprint 0.9 complete)
 
 ## Overview
 
@@ -392,6 +392,37 @@ Git detects conflicts natively during `git pull`. The conflict handler intercept
 | `keep_device` | Always prefer a specific device's saves *(deferred to post-1.0 — not implemented in Phase 0)* |
 
 Resolution removes `.local` and `.conflict` files, commits the result.
+
+### Interactive Resolution Operations (Sprint 0.9)
+
+Between detecting a conflict and resolving it, the user needs an interactive workflow:
+
+1. **Browse** — `ch_list_conflicts_detailed` returns all conflicts with metadata (system, game, device names, timestamps) in a key-value output format.
+2. **Try** — `ch_try_version` non-destructively swaps a conflict version into the device's active save slot so the user can test it in-game. No repo modifications.
+3. **Track** — `ch_get_active_version` reports which version is currently active. `ch_is_trying` and `ch_is_trying_modified` detect the trying state and whether the user played during a try.
+4. **Resolve** — `ch_resolve` commits the decision. `ch_promote_trying` handles the special case where the user generated new progress during a try.
+
+#### Try Marker System
+
+When a user tries a save version, a marker file is written to `$repo_dir/.continuity/trying/` (gitignored). The marker records:
+
+```
+version=local
+checksum=53ff1d8d5aad6a5c521853a254ba9697
+device_path=/mnt/SDCARD/Saves/GB/pokemon_red.srm
+```
+
+The checksum (MD5) detects if the user played during the try — the "Pokémon scenario." If the file is modified, the sync pipeline skips it (safety gate in `rp_confirm_changes`) and the user must explicitly promote or resolve.
+
+#### Key-Value Output Format
+
+All conflict info functions output data in a stable key-value format: `key=value`, one per line. Blocks separated by blank lines. This format is trivially parseable in shell, C, Java, and Kotlin without requiring JSON generation.
+
+Defined keys: `file`, `system`, `game`, `remote_device`, `remote_timestamp`, `local_device`, `local_timestamp`, `status`, `active_version`, `trying_modified`.
+
+#### Sync Pipeline Safety
+
+`rp_confirm_changes` checks `ch_is_trying` for each candidate file. Files in trying state are excluded from the entire copy → stage → commit → push pipeline, preventing accidental promotion of test copies.
 
 ---
 
