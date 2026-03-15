@@ -230,11 +230,16 @@ Note: only errors after Step 4 fire red. Step 1 (sentinel missing) and Steps 8-9
 
 #### `src/core/boot_pull.sh` — `bp_run()`
 
-**After diverged pull (conflict handler invoked):**
+**After diverged pull (conflict handler succeeds):**
 ```sh
 local conflict_count
 conflict_count=$(ch_count_conflicts "$repo_dir")
 ss_notify "$repo_dir" "red" "$conflict_count conflict(s) — action required"
+```
+
+**After diverged pull (conflict handler fails):**
+```sh
+ss_notify "$repo_dir" "red" "Sync error — conflict handler failed"
 ```
 
 **NOT called when:**
@@ -251,6 +256,11 @@ ss_notify "$repo_dir" "green" "Initial sync complete"
 **After initial sync, push offline:**
 ```sh
 ss_notify "$repo_dir" "yellow" "Initial sync — push pending"
+```
+
+**After initial sync, push failure:**
+```sh
+ss_notify "$repo_dir" "red" "Push failed — check credentials"
 ```
 
 #### `src/core/conflict_handler.sh` — `ch_handle_pull_conflict()` (Sprint 0.8, modified by 0.9)
