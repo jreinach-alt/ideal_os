@@ -80,7 +80,7 @@ trying_modified=no
 2. Derive `system` from path: everything before the first `/`.
 3. Derive `game` from path: filename without `.srm` extension.
 4. Determine `active_version` by reading the try marker (see `ch_try_version`). Default is `remote`.
-5. Determine `trying_modified` by calling `ch_is_trying_modified`. Default is `no`.
+5. Determine `trying_modified`: first check `ch_is_trying` — if no try marker exists, output `no` without calling `ch_is_trying_modified` (avoids unnecessary work). Only call `ch_is_trying_modified` when a try marker exists.
 6. Output `status` from the `.conflict` JSON (currently always `unresolved` for active conflicts).
 
 **Returns:** 0 on success, 1 if `.conflict` file doesn't exist or is unparseable.
@@ -162,13 +162,13 @@ trying_modified=yes
    - Source file: `$repo_dir/$repo_path` (the canonical `.srm`)
    - Copy to device save path.
 5. If `version` is `local`:
-   - Find the `.local` file: `$repo_dir/$repo_path.$device_name.local` where `$device_name` is extracted from `ch_list_local_files` output for this `repo_path`. If multiple `.local` files exist (future multi-device scenario), use the first match.
+   - Construct the `.local` file path directly: `$repo_dir/$repo_path.$CONTINUITY_DEVICE_NAME.local`. The device name is always available via the PAL environment variable, and the `.local` file was created by `ch_preserve_conflict` on this device. If the direct path doesn't exist (e.g., resolving a conflict originally detected on a different device), fall back to finding the first `.local` file matching `$repo_dir/$repo_path.*.local`.
    - Copy to device save path.
-6. Compute a checksum of the copied file at the device save path using `cksum` (POSIX, available in BusyBox).
+6. Compute a checksum of the copied file at the device save path using `md5sum` (available in BusyBox and coreutils with identical output format). Store only the hash (strip the filename): `md5sum "$device_path" | cut -d' ' -f1`.
 7. Write a marker file at `$repo_dir/.continuity/trying/$marker_name` in key-value format:
    ```
    version=local
-   checksum=3928457621 32768
+   checksum=53ff1d8d5aad6a5c521853a254ba9697
    device_path=/mnt/SDCARD/Saves/GB/pokemon_red.srm
    ```
    The marker name is derived from the repo path: replace `/` with `_` (e.g., `gb/pokemon_red.srm` → `gb_pokemon_red.srm`).
@@ -245,7 +245,7 @@ fi
 **Implementation:**
 1. Read the try marker for `repo_path`. If no marker, return 1.
 2. Extract `checksum` and `device_path` from the marker.
-3. Compute `cksum` of the current file at `device_path`.
+3. Compute `md5sum "$device_path" | cut -d' ' -f1` for the current file.
 4. If the checksums differ, the file was modified during the try. Return 0.
 5. If checksums match, the file is unmodified. Return 1.
 
@@ -344,17 +344,17 @@ The try marker is a key-value file (consistent with the output format used elsew
 **Contents:**
 ```
 version=local
-checksum=3928457621 32768
+checksum=53ff1d8d5aad6a5c521853a254ba9697
 device_path=/mnt/SDCARD/Saves/GB/pokemon_red.srm
 ```
 
 | Key | Description |
 |-----|-------------|
 | `version` | `remote` or `local` — which conflict version was copied |
-| `checksum` | Output of `cksum` on the file at copy time (CRC + size) |
+| `checksum` | MD5 hex digest of the file at copy time (32 hex chars) |
 | `device_path` | Absolute path where the file was copied to on the device |
 
-**Why `cksum`:** POSIX-mandated, available in BusyBox. Not cryptographic, but we're detecting accidental modification (game saves), not adversarial tampering. `cksum` produces a CRC-32 checksum and byte count — together they reliably detect any save file change.
+**Why `md5sum`:** Available in both BusyBox and coreutils with identical output format (`<hash>  <filename>`). Not cryptographic for modern security purposes, but we're detecting accidental modification (game saves), not adversarial tampering. A 128-bit hash reliably detects any save file change. Simpler than `cksum` (single value vs CRC+size), and — critically — `cksum` is not available as a BusyBox applet on our target devices.
 
 ---
 
@@ -722,12 +722,12 @@ The critical path — user plays during a try, sync engine must not commit the m
 
 ---
 
-## Open Questions
+## Open Questions — Resolved
 
-1. **Marker filename derivation.** The spec uses `sed 's|/|_|g'` to convert `gb/pokemon_red.srm` → `gb_pokemon_red.srm`. Simple and readable for debugging. Could collide if someone had both `a/b.srm` and `a_b.srm` (astronomically unlikely for game saves). Recommend keeping the simple approach.
+1. **Marker filename derivation.** ✅ **Decided: keep the simple `sed 's|/|_|g'` approach.** Collision between `a/b.srm` and `a_b.srm` is astronomically unlikely for game saves. Simple and readable for debugging.
 
-2. **`pm_repo_to_local` dependency in `ch_try_version`.** This function requires the platform map to be loaded (`pm_load_platform_map` called). Unit tests must either load a test platform map or define a stub `pm_repo_to_local`. Integration tests should load a real platform map.
+2. **`pm_repo_to_local` dependency in `ch_try_version`.** ✅ **Decided: unit tests load a real platform map** (copy `config/platform_maps/nextui.json` to the test temp dir and call `pm_load_platform_map`). This is consistent with the existing test pattern used in `test_conflict_handler.sh` and `test_runtime_poll.sh`. Integration tests also load a real platform map.
 
-3. **`cksum` output format.** BusyBox `cksum` outputs `CRC SIZE FILENAME`. The marker stores `CRC SIZE` (without filename) for clean comparison. Verify this works consistently across BusyBox versions and full coreutils.
+3. **Checksum tool.** ✅ **Decided: use `md5sum` instead of `cksum`.** BusyBox does not include `cksum` as an applet. `md5sum` is available in both BusyBox and coreutils with identical output format (`<32-char-hex>  <filename>`). The marker stores only the hash: `md5sum "$path" | cut -d' ' -f1`. Simpler (single value) and more reliable (128-bit hash vs 32-bit CRC).
 
-4. **Should `ch_promote_trying` also work for unmodified trying saves?** Currently it requires `ch_is_trying_modified` to return 0. An alternative: allow promoting any trying version (which is functionally equivalent to `ch_resolve keep_local/keep_remote` based on the active version). Recommend keeping the restriction — if the file is unmodified, use `ch_resolve` instead. `ch_promote_trying` is specifically for the "new progress during try" case.
+4. **Should `ch_promote_trying` also work for unmodified trying saves?** ✅ **Decided: no — keep the restriction.** If the file is unmodified, use `ch_resolve` instead. `ch_promote_trying` is specifically for the "new progress during try" case (the Pokémon scenario). Distinct semantics deserve a distinct function with a distinct commit message.
