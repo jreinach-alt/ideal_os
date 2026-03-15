@@ -1,6 +1,6 @@
 # Sprint 0.10 — Sync Notifications
 
-**Status:** Draft
+**Status:** Approved
 **Date:** 2026-03-15
 **Dependencies:** Sprint 0.9 (conflict ops), Sprint 0.6 (runtime poll), Sprint 0.5 (boot pull), Sprint 0.4 (cold start)
 
