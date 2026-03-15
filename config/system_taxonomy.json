@@ -47,7 +47,7 @@
     {
       "canonical": "sms",
       "display_name": "Sega Master System",
-      "aliases": ["SMS", "Master System", "master_system"],
+      "aliases": ["SMS", "MS", "Master System", "master_system"],
       "srm_size_typical_kb": 8,
       "srm_size_max_kb": 32
     },
