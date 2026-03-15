@@ -1,6 +1,6 @@
 # Sprint 0.9 — Conflict Resolution Operations
 
-**Status:** Draft
+**Status:** Approved
 **Date:** 2026-03-15
 **Dependencies:** Sprint 0.8 (conflict handler), Sprint 0.6 (runtime poll), Sprint 0.5 (sync engine)
 
