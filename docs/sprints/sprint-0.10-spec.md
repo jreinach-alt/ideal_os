@@ -475,10 +475,10 @@ Platforms implement `pal_on_sync_result` according to these rules:
 
 ---
 
-## Open Questions
+## Resolved Design Decisions
 
-1. **Re-fire red on every poll cycle?** When a trying-modified condition persists, should every poll cycle re-call `pal_on_sync_result "red" ...`? Pro: platforms that don't maintain persistent state (e.g., a dumb overlay that just shows what it's told) get re-reminded. Con: could generate noise if the platform does maintain state. Recommend: re-fire. It's the platform's job to debounce if needed. The core's contract is "this is what's happening right now."
+1. **Re-fire red on every poll cycle.** Yes. When a trying-modified condition or unresolved conflict persists, every poll cycle re-calls `pal_on_sync_result "red" ...`. The core's contract is "this is what's happening right now." It's the platform's job to debounce if needed — a dumb overlay that just shows what it's told will keep showing red, which is correct.
 
-2. **Message format stability.** Should platform UIs parse the message string, or treat it as opaque display text? Recommend: opaque display text. Platforms should only branch on `level` (green/yellow/red). The message is for the user to read, not for code to parse. If platforms need structured data (e.g., conflict count), they should call Sprint 0.9's `ch_count_conflicts` directly.
+2. **Message is opaque display text.** Platforms must NOT parse the message string. Branch only on `level` (green/yellow/red). The message is for the user to read. If platforms need structured data (e.g., conflict count), they call Sprint 0.9's `ch_count_conflicts` directly.
 
-3. **Device JSON `last_sync`/`last_push` updates.** The previous draft had `ss_record_event` updating these. In this slimmer model, `ss_notify` could update them — but Open Question 3 from the previous draft (atomicity during the pipeline) still applies. Recommend: defer device JSON updates. The last-status file covers the "when was the last sync?" query. Device JSON updates can be added when the Tool PAK (Sprint 1.2) needs cross-device visibility of sync times.
+3. **No device JSON updates.** This module is a listener, not a state manager. It does not update `last_sync`/`last_push` in the device JSON. Those fields are the responsibility of whatever module owns device registration state. The last-status file is the only persistent artifact this sprint writes, and it exists solely so the Tool PAK can answer "what was the last notification?" at query time.
