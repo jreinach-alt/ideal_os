@@ -1,6 +1,6 @@
 # Sprint 0.7 — Stale Boot Recovery
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.6 (runtime poll — complete; full sentinel lifecycle in steady state, `rp_update_sentinel` and the clean shutdown marker concept established as part of graceful exit design)
 
