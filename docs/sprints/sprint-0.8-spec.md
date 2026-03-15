@@ -1,6 +1,6 @@
 # Sprint 0.8 — Conflict Handler
 
-**Status:** Draft — Awaiting Approval
+**Status:** Approved
 **Date:** 2026-03-13
 **Dependencies:** Sprint 0.7 (all sync phases operational — stale boot recovery complete; conflicts can arise during any pull phase)
 
