@@ -27,6 +27,7 @@ After this sprint, the daemon is a skeleton: it starts, checks enrollment, runs 
 - `src/core/path_mapper.sh` — `pm_load_platform_map()` (Sprint 0.2)
 - `src/platforms/nextui/pal_nextui.sh` — NextUI PAL (Sprint 0.2)
 - `src/platforms/nextui/enroll_sd_card.sh` — `esd_detect_setup_file()`, `esd_import()` (Sprint 0.3)
+- `upstream/nextui/notes/build-system-analysis.md` — NextUI build system, cross-compilation toolchain
 
 ---
 
@@ -291,6 +292,89 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 
 ---
 
+### Part 7: Static Git Binary — `scripts/build_git.sh`
+
+**File:** `scripts/build_git.sh`
+
+The TrimUI Brick has no system git. We cross-compile a static git binary using the existing NextUI Docker toolchain (`ghcr.io/loveretro/tg5040-toolchain`).
+
+**Why cross-compile instead of downloading a binary:** Reproducible, guaranteed architecture match (ARM Cortex-A53), no third-party binary supply chain, and git is GPL-2.0 — same license as NextUI.
+
+#### `scripts/build_git.sh` — Cross-compile static git for ARM
+
+**Usage:** `./scripts/build_git.sh`
+
+**Prerequisites:** Docker installed and running.
+
+**Behavior:**
+1. Pull or verify the NextUI toolchain image: `ghcr.io/loveretro/tg5040-toolchain:latest`.
+2. Inside the container, download the git source tarball (pinned version, e.g., git 2.44.0).
+3. Configure with minimal dependencies:
+   - `NO_OPENSSL=1` — use BusyBox-compatible HTTPS (via `NO_CURL=1` with git's internal HTTP)
+   - Actually: `CURL_LDFLAGS=-lcurl -lssl -lcrypto` if the toolchain provides libcurl+openssl. If not, use `NO_CURL=1` and rely on `git://` or configure with `USE_LIBPCRE2=` disabled, etc.
+   - The key requirement: `git clone https://...`, `git pull`, `git push`, `git add`, `git commit`, `git diff`, `git log` must work over HTTPS to GitHub.
+   - Static linking: `LDFLAGS=-static` so the binary has zero runtime dependencies on the device.
+4. `make strip` — strip debug symbols (minimizes binary size).
+5. Copy the resulting `git` binary to `build/bin/git`.
+6. Print the binary size and verify it runs: `file build/bin/git` should show ARM ELF.
+
+**Output:** `build/bin/git` — a single static ARM binary, typically 5-15 MB.
+
+**Version pinning:** The git version is pinned in the script (not `latest`). This ensures reproducible builds. Update the version deliberately, not accidentally.
+
+**What git features we need:** Only the plumbing required by `sync_engine.sh`:
+- `git clone`, `git pull`, `git push` (HTTPS transport to GitHub)
+- `git add`, `git commit`, `git log`, `git diff`, `git status`
+- `git config`, `git branch`, `git rev-parse`
+- Credential helper support (`credential.helper`)
+
+**What we don't need:** GUI, SVN bridge, email tools, Perl scripts, documentation. The `make` invocation should use `NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 NO_GETTEXT=1 NO_SVN_TESTS=1` to minimize the build.
+
+**Toolchain investigation required:** Before implementation, verify what libraries the `tg5040-toolchain` Docker image provides. Specifically:
+- Does it have `libcurl` + `libssl`/`libcrypto`? (Needed for HTTPS git operations.)
+- If not, the build script must also compile these from source (curl + mbedtls or openssl) as static libraries.
+- This is a known unknown — the build script must handle both cases.
+
+---
+
+### Part 8: PAK Assembly — `scripts/build_pak.sh`
+
+**File:** `scripts/build_pak.sh`
+
+Assembles the Continuity.pak directory from repo source files and the cross-compiled git binary.
+
+**Usage:** `./scripts/build_pak.sh`
+
+**Prerequisites:** `build/bin/git` exists (run `build_git.sh` first).
+
+**Behavior:**
+1. Create `build/Continuity.pak/` directory structure.
+2. Copy `src/platforms/nextui/auto.sh` → `build/Continuity.pak/auto.sh`.
+3. Create stub `launch.sh` → `build/Continuity.pak/launch.sh`:
+   ```sh
+   #!/bin/sh
+   echo "Continuity — sync daemon is running in the background."
+   ```
+4. Copy `build/bin/git` → `build/Continuity.pak/bin/git`.
+5. Copy `config/platform_maps/nextui.json` → `build/Continuity.pak/config/platform_maps/nextui.json`.
+6. Copy `src/platforms/nextui/continuity_daemon.sh` → `build/Continuity.pak/scripts/continuity_daemon.sh`.
+7. Copy `src/platforms/nextui/pal_nextui.sh` → `build/Continuity.pak/scripts/pal_nextui.sh`.
+8. Copy `src/platforms/nextui/enroll_sd_card.sh` → `build/Continuity.pak/scripts/enroll_sd_card.sh`.
+9. Copy all `src/core/*.sh` → `build/Continuity.pak/scripts/core/`.
+10. `chmod +x` all `.sh` files and `bin/git`.
+11. Print summary: file count, total size.
+
+**Output:** `build/Continuity.pak/` — ready to copy to `/mnt/SDCARD/Tools/` on the Brick's SD card.
+
+**Deploy step (manual):** Mount the Brick's SD card (or use adb/SSH), copy:
+```sh
+cp -r build/Continuity.pak /path/to/sdcard/Tools/
+```
+
+Power on the Brick. NextUI discovers the PAK and runs `auto.sh` on boot.
+
+---
+
 ## Out of Scope
 
 | Item | Sprint |
@@ -302,8 +386,6 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 | Log rotation | 1.4 |
 | `pal_on_sync_result` / show2.elf notifications | 1.4 |
 | Tool PAK UI (status, manual sync, conflict resolution) | 1.5 |
-| Build script for assembling the PAK | future build sprint |
-| Static git binary procurement | future build sprint |
 
 ---
 
@@ -317,6 +399,8 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 | `src/platforms/nextui/auto.sh` | Boot hook: starts daemon in background |
 | `tests/unit/platforms/nextui/test_daemon_bootstrap.sh` | Unit tests for PID management, module loading, enrollment check |
 | `tests/integration/test_daemon_enrollment.sh` | Integration test: full enrollment via daemon startup |
+| `scripts/build_git.sh` | Cross-compile static git binary for ARM (TrimUI Brick) using Docker toolchain |
+| `scripts/build_pak.sh` | Assemble Continuity.pak directory from source + git binary |
 | `docs/sprints/sprint-1.1-spec.md` | This spec |
 
 ### Files Modified
@@ -331,6 +415,9 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 |-----------|---------|
 | `tests/unit/platforms/` | Platform-specific unit tests |
 | `tests/unit/platforms/nextui/` | NextUI unit tests |
+| `build/` | Build output directory (git-ignored) |
+| `build/bin/` | Cross-compiled binaries |
+| `build/Continuity.pak/` | Assembled PAK for deployment |
 
 ---
 
@@ -406,6 +493,29 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 39. All variable expansions are quoted.
 40. All new functions use `printf` for output, not `echo`.
 41. All tests pass under `busybox ash`.
+
+### Static Git Build (`scripts/build_git.sh`)
+
+42. `build_git.sh` produces a static ARM ELF binary at `build/bin/git`.
+43. The binary is statically linked (no shared library dependencies on the device).
+44. Git version is pinned in the script — not `latest`.
+45. The binary supports HTTPS transport (`git clone https://...` works).
+46. `git clone`, `git pull`, `git push`, `git add`, `git commit`, `git diff`, `git log`, `git config`, `git rev-parse` all function.
+47. Build uses `NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 NO_GETTEXT=1` to minimize size.
+48. Binary is stripped of debug symbols.
+49. Build script exits with clear error if Docker is not running.
+
+### PAK Assembly (`scripts/build_pak.sh`)
+
+50. `build_pak.sh` produces `build/Continuity.pak/` with the directory structure matching the PAK layout in the Design section.
+51. `build_pak.sh` exits with clear error if `build/bin/git` does not exist.
+52. All `.sh` files and `bin/git` are `chmod +x` in the output.
+53. `auto.sh` is at the PAK root (not in `scripts/`).
+54. `launch.sh` stub exists at the PAK root.
+55. `config/platform_maps/nextui.json` is included.
+56. All 11 core modules are copied to `scripts/core/`.
+57. PAK assembly prints a file count and total size summary.
+58. The assembled PAK, when copied to `/mnt/SDCARD/Tools/` on a Brick, results in a working daemon on boot.
 
 ---
 
@@ -495,4 +605,9 @@ The daemon script is sourced (not executed) so individual functions can be calle
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] On-device test checklist documented.
+- [ ] `scripts/build_git.sh` cross-compiles a static ARM git binary via Docker.
+- [ ] `scripts/build_pak.sh` assembles `build/Continuity.pak/` from source + git binary.
+- [ ] `build/` directory is git-ignored.
+- [ ] Static git binary supports HTTPS clone/push/pull to GitHub.
+- [ ] PAK can be copied to Brick SD card and daemon starts on boot.
 - [ ] Sprint summary written to `docs/sprints/sprint-1.1-summary.md` on completion.
