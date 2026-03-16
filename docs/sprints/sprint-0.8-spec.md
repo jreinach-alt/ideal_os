@@ -8,7 +8,7 @@
 
 ## Goal
 
-Implement the conflict handler — the module that preserves both sides of a diverged-history save conflict, writes structured metadata, and provides resolution functions to clean up conflict artifacts. When `se_pull` returns 1 (branches have diverged and a fast-forward pull is not possible), the sync engine cannot automatically merge `.srm` files. This sprint gives the system a safe, deterministic way to handle that case: preserve the local device's version alongside the remote (canonical) version, commit the conflict state so all devices can see it, and provide resolution functions that platform UIs (Sprint 1.2 Tool PAK, Sprint 2.2 RetroDeck app) can call to resolve conflicts when the user makes a choice.
+Implement the conflict handler — the module that preserves both sides of a diverged-history save conflict, writes structured metadata, and provides resolution functions to clean up conflict artifacts. When `se_pull` returns 1 (branches have diverged and a fast-forward pull is not possible), the sync engine cannot automatically merge `.srm` files. This sprint gives the system a safe, deterministic way to handle that case: preserve the local device's version alongside the remote (canonical) version, commit the conflict state so all devices can see it, and provide resolution functions that platform UIs (Sprint 1.5 Tool PAK, Sprint 2.2 RetroDeck app) can call to resolve conflicts when the user makes a choice.
 
 The invariant this sprint enforces is stated in the architecture spec: **no save data is ever silently overwritten.** After Sprint 0.8, the only path where a `.srm` file is replaced is through an explicit resolution call.
 
@@ -365,7 +365,7 @@ The `keep_remote` and `keep_local` resolution paths both use `git rm --cached` t
 
 The inline pseudocode above shows the logical intent. The actual implementation must handle the exact filename of the `.local` file (which includes the device name) carefully. Avoid hard-coding `$CONTINUITY_DEVICE_NAME` in `ch_resolve` — instead, derive the `.local` filename from what actually exists on disk using `find`.
 
-**Multi-device `.local` cleanup:** When resolving a conflict, `ch_resolve` must clean up ALL `.local` files matching `<repo_path>.*.local` (not just the first one found). In multi-device conflict scenarios (rare but possible), the repo may contain `save.srm.device-a.local` and `save.srm.device-b.local`. For `keep_local`, `head -1` picks which `.local` file becomes canonical — this is acceptable since multi-device conflict UI (Sprint 1.2) can offer per-device selection. For `keep_remote`, all `.local` files are simply deleted. All `.local` files must be removed from both disk and git index as part of resolution cleanup.
+**Multi-device `.local` cleanup:** When resolving a conflict, `ch_resolve` must clean up ALL `.local` files matching `<repo_path>.*.local` (not just the first one found). In multi-device conflict scenarios (rare but possible), the repo may contain `save.srm.device-a.local` and `save.srm.device-b.local`. For `keep_local`, `head -1` picks which `.local` file becomes canonical — this is acceptable since multi-device conflict UI (Sprint 1.5) can offer per-device selection. For `keep_remote`, all `.local` files are simply deleted. All `.local` files must be removed from both disk and git index as part of resolution cleanup.
 
 The `keep_newest` path calls `ch_resolve` recursively with `keep_local` or `keep_remote`. The recursive call includes the commit and push. There is no infinite recursion risk since the recursive call always uses `keep_local` or `keep_remote`, not `keep_newest`.
 
@@ -404,7 +404,7 @@ if command -v pal_on_conflict >/dev/null 2>&1; then
 fi
 ```
 
-This sprint does not implement `pal_on_conflict` in any platform PAL — that is Sprint 1.2 (NextUI Tool PAK). The guard ensures `conflict_handler.sh` is safe to call from any PAL that does not define this function.
+This sprint does not implement `pal_on_conflict` in any platform PAL — that is Sprint 1.5 (NextUI Tool PAK). The guard ensures `conflict_handler.sh` is safe to call from any PAL that does not define this function.
 
 ---
 
@@ -715,7 +715,7 @@ Set up diverged state (same as Scenario 1). Call `bp_run "$CONTINUITY_REPO_DIR"`
 
 2. **Branch name.** **Resolved — hardcoded `main`, validated during enrollment.** Sprint 0.3 enrollment now validates that the cloned repo's default branch is `main`, failing enrollment if it's not. All downstream modules (including this sprint's `conflict_handler.sh`) can safely reference `origin/main`. Configurable branch names deferred to a future sprint.
 
-3. **Multiple `.local` files for the same save (multi-device conflicts).** **Resolved — `ch_resolve` cleans up ALL `.local` files for a given save.** For `keep_local`, `head -1` picks which `.local` file becomes canonical. For `keep_remote`, all `.local` files are simply deleted. All `.local` files matching `<repo_path>.*.local` are removed from both disk and git index during resolution. Multi-device conflict UI (Sprint 1.2) can offer per-device selection with more granularity.
+3. **Multiple `.local` files for the same save (multi-device conflicts).** **Resolved — `ch_resolve` cleans up ALL `.local` files for a given save.** For `keep_local`, `head -1` picks which `.local` file becomes canonical. For `keep_remote`, all `.local` files are simply deleted. All `.local` files matching `<repo_path>.*.local` are removed from both disk and git index during resolution. Multi-device conflict UI (Sprint 1.5) can offer per-device selection with more granularity.
 
 4. **`reset --hard` and uncommitted device saves.** **Resolved — safe.** Analysis confirms no core module leaves uncommitted tracked changes in the repo working tree outside of a `se_commit` call. All local-only files (`sentinel`, `last_known_commit`, `credentials`, `device_name`, `clean_shutdown`) are gitignored. `.local` and `.conflict` artifacts are created by `ch_preserve_conflict` before `reset --hard` and are untracked at that point, so `reset --hard` preserves them. **Invariant:** No core module leaves uncommitted tracked changes in the repo working tree outside of a `se_commit` call.
 

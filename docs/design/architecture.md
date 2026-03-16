@@ -215,7 +215,7 @@ Device setup and credential management. Two paths:
 5. Deletes plaintext setup file
 6. Writes credential to `$CONTINUITY_REPO_DIR/.continuity/credentials`
 
-**Local Web Setup (Sprint 1.2 — deferred):**
+**Local Web Setup (Sprint 1.5 — deferred):**
 1. Device starts BusyBox `httpd` on port 8080
 2. Serves a simple HTML form (paste repo URL + PAT + device name)
 3. User opens `http://<device-ip>:8080` on phone

@@ -1,8 +1,8 @@
-# Sprint 1.1c — Poll Loop + Graceful Shutdown
+# Sprint 1.3 — Poll Loop + Graceful Shutdown
 
 **Status:** Draft
 **Date:** 2026-03-16
-**Dependencies:** Sprint 1.1b (boot dispatch), Sprint 0.6 (runtime poll)
+**Dependencies:** Sprint 1.2 (boot dispatch), Sprint 0.6 (runtime poll)
 
 ---
 
@@ -12,14 +12,14 @@ Turn the daemon from a "boot and exit" script into a long-running background pro
 
 After boot dispatch completes, the daemon enters a poll loop: every 30 seconds, it calls `rp_run` to check for save changes, commit them, and push if online. When the user powers off the Brick, NextUI sends SIGTERM to all processes. The daemon catches it, does a final push of any queued commits, writes a clean shutdown marker (so the next boot knows the previous session ended cleanly), removes the PID file, and exits.
 
-After this sprint, the daemon is fully functional for the happy path: boot → sync → play → save → synced within 30s → power off → clean shutdown. WiFi recovery and notifications are in 1.1d.
+After this sprint, the daemon is fully functional for the happy path: boot → sync → play → save → synced within 30s → power off → clean shutdown. WiFi recovery and notifications are in 1.4.
 
 ---
 
 ## Reference Specs
 
-- `docs/sprints/sprint-1.1a-spec.md` — Daemon skeleton, PID management
-- `docs/sprints/sprint-1.1b-spec.md` — Boot dispatch
+- `docs/sprints/sprint-1.1-spec.md` — Daemon skeleton, PID management
+- `docs/sprints/sprint-1.2-spec.md` — Boot dispatch
 - `src/core/runtime_poll.sh` — `rp_run()` (Sprint 0.6)
 - `src/core/stale_boot.sh` — `sb_mark_clean_shutdown()` (Sprint 0.7)
 - `src/core/sync_engine.sh` — `se_push()`, `se_has_unpushed_commits()` (Sprint 0.3)
@@ -102,7 +102,7 @@ done
 
 **Error handling:** If `rp_run` returns non-zero, log the error and continue. The poll loop never exits on its own. Only SIGTERM (or SIGKILL) stops it.
 
-**Note:** WiFi recovery and log rotation are added to the loop body in Sprint 1.1d. For now, the loop is just `rp_run` + `sleep`.
+**Note:** WiFi recovery and log rotation are added to the loop body in Sprint 1.4. For now, the loop is just `rp_run` + `sleep`.
 
 ---
 
@@ -152,15 +152,15 @@ trap cd_shutdown TERM
 
 ### Changes to `cd_main`
 
-Update `cd_main` from Sprint 1.1b:
+Update `cd_main` from Sprint 1.2:
 
-**Before (1.1b):**
+**Before (1.2):**
 ```
 14. Log: "Boot dispatch complete"
 15. cd_remove_pid; exit 0
 ```
 
-**After (1.1c):**
+**After (1.3):**
 ```
 14. Log: "Boot dispatch complete, entering poll loop"
 15. Set _CD_REPO_DIR="$CONTINUITY_REPO_DIR"
@@ -175,10 +175,10 @@ Update `cd_main` from Sprint 1.1b:
 
 | Item | Sprint |
 |------|--------|
-| WiFi recovery (push queued commits in poll loop) | 1.1d |
-| Log rotation | 1.1d |
-| Notifications (pal_on_sync_result) | 1.1d |
-| Tool PAK UI | 1.2 |
+| WiFi recovery (push queued commits in poll loop) | 1.4 |
+| Log rotation | 1.4 |
+| Notifications (pal_on_sync_result) | 1.4 |
+| Tool PAK UI | 1.5 |
 
 ---
 
@@ -190,7 +190,7 @@ Update `cd_main` from Sprint 1.1b:
 |------|---------|
 | `tests/unit/platforms/nextui/test_daemon_poll.sh` | Unit tests for `cd_poll_loop` behavior (mocked) and `cd_shutdown` |
 | `tests/integration/test_daemon_runtime.sh` | Integration test: boot → poll → detect change → sync → shutdown |
-| `docs/sprints/sprint-1.1c-spec.md` | This spec |
+| `docs/sprints/sprint-1.3-spec.md` | This spec |
 
 ### Files Modified
 
@@ -327,7 +327,7 @@ This tests actual SIGTERM delivery. May be fragile in CI but worth having:
 
 | # | Test | Steps | Expected |
 |---|------|-------|----------|
-| D1 | Runtime sync | Enroll + boot (1.1a/b). Play a game, save in-game. Wait 30s. | Check GitHub repo — save file appears in a new commit. |
+| D1 | Runtime sync | Enroll + boot (Sprints 1.1/1.2). Play a game, save in-game. Wait 30s. | Check GitHub repo — save file appears in a new commit. |
 | D2 | Graceful shutdown | Power off Brick normally. | Log shows "Shutdown: SIGTERM received" and "Shutdown: complete." Clean shutdown marker exists. |
 | D3 | Clean boot after shutdown | Power on after D2. | Log shows "Boot: normal" (not stale). |
 | D4 | Stale boot after crash | SSH in, `kill -9 $(cat /tmp/continuity.pid)`. Reboot. | Log shows "Boot: stale." Any pending changes recovered. |
@@ -348,4 +348,4 @@ This tests actual SIGTERM delivery. May be fragile in CI but worth having:
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] On-device test checklist documented.
-- [ ] Sprint summary written to `docs/sprints/sprint-1.1c-summary.md` on completion.
+- [ ] Sprint summary written to `docs/sprints/sprint-1.3-summary.md` on completion.

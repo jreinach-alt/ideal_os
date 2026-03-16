@@ -1,4 +1,4 @@
-# Sprint 1.1a — Daemon Bootstrap + Enrollment
+# Sprint 1.1 — Daemon Bootstrap + Enrollment
 
 **Status:** Draft
 **Date:** 2026-03-16
@@ -42,28 +42,28 @@ Sprint 1.1 is broken into four sub-sprints (a through d), each building incremen
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │             continuity_daemon.sh (background)              │  │
 │  │                                                            │  │
-│  │  1. PID guard ─── if already running → exit       ← 1.1a  │  │
-│  │  2. Source PAL + core modules                     ← 1.1a  │  │
-│  │  3. pal_init() + pal_validate()                   ← 1.1a  │  │
-│  │  4. se_init() + pm_load_platform_map()            ← 1.1a  │  │
-│  │  5. Enrollment check ─── if not enrolled → exit   ← 1.1a  │  │
-│  │  6. Boot dispatch:                                ← 1.1b  │  │
+│  │  1. PID guard ─── if already running → exit       ← 1.1  │  │
+│  │  2. Source PAL + core modules                     ← 1.1  │  │
+│  │  3. pal_init() + pal_validate()                   ← 1.1  │  │
+│  │  4. se_init() + pm_load_platform_map()            ← 1.1  │  │
+│  │  5. Enrollment check ─── if not enrolled → exit   ← 1.1  │  │
+│  │  6. Boot dispatch:                                ← 1.2  │  │
 │  │     ├── cold start? → cs_run()                             │  │
 │  │     ├── stale boot? → sb_run()                             │  │
 │  │     └── normal boot → bp_run()                             │  │
-│  │  7. Set SIGTERM trap                              ← 1.1c  │  │
-│  │  8. Poll loop (30s):                              ← 1.1c  │  │
-│  │     ├── WiFi recovery (push queued commits)       ← 1.1d  │  │
-│  │     ├── rp_run()                                  ← 1.1c  │  │
-│  │     └── Log rotation check                        ← 1.1d  │  │
-│  │  9. On SIGTERM:                                   ← 1.1c  │  │
+│  │  7. Set SIGTERM trap                              ← 1.3  │  │
+│  │  8. Poll loop (30s):                              ← 1.3  │  │
+│  │     ├── WiFi recovery (push queued commits)       ← 1.4  │  │
+│  │     ├── rp_run()                                  ← 1.3  │  │
+│  │     └── Log rotation check                        ← 1.4  │  │
+│  │  9. On SIGTERM:                                   ← 1.3  │  │
 │  │     ├── Final push attempt                                 │  │
 │  │     ├── sb_mark_clean_shutdown()                            │  │
 │  │     ├── Remove PID file                                    │  │
 │  │     └── exit 0                                             │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
-│  Notifications: pal_on_sync_result (show2.elf)       ← 1.1d    │
+│  Notifications: pal_on_sync_result (show2.elf)       ← 1.4    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,7 @@ Sprint 1.1 is broken into four sub-sprints (a through d), each building incremen
 ```
 /mnt/SDCARD/Tools/Continuity.pak/
 ├── auto.sh                          ← Boot hook
-├── launch.sh                        ← Tool UI entry (Sprint 1.2 — stub)
+├── launch.sh                        ← Tool UI entry (Sprint 1.5 — stub)
 ├── bin/
 │   └── git                          ← Static git binary (arm, musl-linked)
 ├── config/
@@ -271,7 +271,7 @@ No parameters. Called at the bottom of `continuity_daemon.sh`.
 10. Load platform map: `pm_load_platform_map "$(pal_get_platform_map)"`.
 11. Enrollment check: `cd_check_enrollment` → if fails, `cd_remove_pid`, exit 1.
 12. Log: `"Bootstrap complete, enrolled as $CONTINUITY_DEVICE_NAME"`.
-13. **Exit 0.** (Boot dispatch added in 1.1b, poll loop in 1.1c.)
+13. **Exit 0.** (Boot dispatch added in 1.2, poll loop in 1.3.)
 14. Cleanup: `cd_remove_pid` before exit.
 
 **Note on step 7-8 ordering:** `pal_init` must run before enrollment check because enrollment code needs `CONTINUITY_SD_ROOT` and `CONTINUITY_REPO_DIR` (set by sourcing the PAL). However, `pal_init` will fail if the device is not yet enrolled (no `device_name` file). The solution:
@@ -295,13 +295,13 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 
 | Item | Sprint |
 |------|--------|
-| Boot dispatch (cold start / stale boot / boot pull) | 1.1b |
-| Runtime poll loop | 1.1c |
-| Graceful shutdown (SIGTERM handler) | 1.1c |
-| WiFi recovery | 1.1d |
-| Log rotation | 1.1d |
-| `pal_on_sync_result` / show2.elf notifications | 1.1d |
-| Tool PAK UI (status, manual sync, conflict resolution) | 1.2 |
+| Boot dispatch (cold start / stale boot / boot pull) | 1.2 |
+| Runtime poll loop | 1.3 |
+| Graceful shutdown (SIGTERM handler) | 1.3 |
+| WiFi recovery | 1.4 |
+| Log rotation | 1.4 |
+| `pal_on_sync_result` / show2.elf notifications | 1.4 |
+| Tool PAK UI (status, manual sync, conflict resolution) | 1.5 |
 | Build script for assembling the PAK | future build sprint |
 | Static git binary procurement | future build sprint |
 
@@ -317,7 +317,7 @@ After successful enrollment, `pal_init` is re-called (in `cd_check_enrollment`) 
 | `src/platforms/nextui/auto.sh` | Boot hook: starts daemon in background |
 | `tests/unit/platforms/nextui/test_daemon_bootstrap.sh` | Unit tests for PID management, module loading, enrollment check |
 | `tests/integration/test_daemon_enrollment.sh` | Integration test: full enrollment via daemon startup |
-| `docs/sprints/sprint-1.1a-spec.md` | This spec |
+| `docs/sprints/sprint-1.1-spec.md` | This spec |
 
 ### Files Modified
 
@@ -488,11 +488,11 @@ The daemon script is sourced (not executed) so individual functions can be calle
 - [ ] PID file in `/tmp/` prevents duplicate daemon instances.
 - [ ] Enrollment runs automatically when `setup.json` is detected.
 - [ ] Daemon exits cleanly when not enrolled and no `setup.json` found.
-- [ ] Daemon exits cleanly after successful enrollment (boot dispatch comes in 1.1b).
+- [ ] Daemon exits cleanly after successful enrollment (boot dispatch comes in 1.2).
 - [ ] Log file created and all messages logged.
 - [ ] All unit tests pass under `busybox ash`.
 - [ ] Integration tests cover: fresh enrollment, already enrolled, no setup.json, enrollment failure.
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] On-device test checklist documented.
-- [ ] Sprint summary written to `docs/sprints/sprint-1.1a-summary.md` on completion.
+- [ ] Sprint summary written to `docs/sprints/sprint-1.1-summary.md` on completion.

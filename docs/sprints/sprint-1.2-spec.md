@@ -1,8 +1,8 @@
-# Sprint 1.1b — Boot Dispatch
+# Sprint 1.2 — Boot Dispatch
 
 **Status:** Draft
 **Date:** 2026-03-16
-**Dependencies:** Sprint 1.1a (daemon bootstrap + enrollment), Sprint 0.7 (stale boot), Sprint 0.6 (runtime poll), Sprint 0.5 (boot pull), Sprint 0.4 (cold start)
+**Dependencies:** Sprint 1.1 (daemon bootstrap + enrollment), Sprint 0.7 (stale boot), Sprint 0.6 (runtime poll), Sprint 0.5 (boot pull), Sprint 0.4 (cold start)
 
 ---
 
@@ -15,15 +15,15 @@ Three cases:
 2. **Stale boot** — Sentinel exists but no clean shutdown marker. The previous session ended abnormally (crash, battery pull). `sb_run` pushes pending commits, pulls remote changes, and scans for uncommitted local changes.
 3. **Normal boot** — Sentinel exists and clean shutdown marker is present. `bp_run` pulls any remote changes since last known commit.
 
-After boot dispatch completes, the daemon exits. (The poll loop comes in 1.1c.) This means we can test each boot scenario end-to-end on-device without worrying about long-running process management yet.
+After boot dispatch completes, the daemon exits. (The poll loop comes in 1.3.) This means we can test each boot scenario end-to-end on-device without worrying about long-running process management yet.
 
-**Key principle:** Boot dispatch failures are non-fatal. If boot pull fails (e.g., offline), the daemon should still be able to proceed to the poll loop (in 1.1c). We log the error and continue. Only enrollment failure is fatal.
+**Key principle:** Boot dispatch failures are non-fatal. If boot pull fails (e.g., offline), the daemon should still be able to proceed to the poll loop (in 1.3). We log the error and continue. Only enrollment failure is fatal.
 
 ---
 
 ## Reference Specs
 
-- `docs/sprints/sprint-1.1a-spec.md` — Daemon skeleton, module loading, enrollment
+- `docs/sprints/sprint-1.1-spec.md` — Daemon skeleton, module loading, enrollment
 - `src/core/cold_start.sh` — `cs_run()`, `cs_is_cold_start()` (Sprint 0.4)
 - `src/core/boot_pull.sh` — `bp_run()` (Sprint 0.5)
 - `src/core/stale_boot.sh` — `sb_run()`, `sb_is_stale()`, `sb_mark_clean_shutdown()` (Sprint 0.7)
@@ -85,15 +85,15 @@ cd_boot_dispatch(repo_dir):
 
 ### Changes to `cd_main`
 
-Update the `cd_main` function from Sprint 1.1a:
+Update the `cd_main` function from Sprint 1.1:
 
-**Before (1.1a):**
+**Before Sprint 1.1:**
 ```
 12. Log: "Bootstrap complete"
 13. cd_remove_pid; exit 0
 ```
 
-**After (1.1b):**
+**After (1.2):**
 ```
 12. Log: "Bootstrap complete, enrolled as $CONTINUITY_DEVICE_NAME"
 13. Boot dispatch:
@@ -103,10 +103,10 @@ Update the `cd_main` function from Sprint 1.1a:
         pal_log "warn" "Boot dispatch returned $boot_rc — continuing"
     fi
 14. Log: "Boot dispatch complete"
-15. cd_remove_pid; exit 0   ← (poll loop replaces this in 1.1c)
+15. cd_remove_pid; exit 0   ← (poll loop replaces this in 1.3)
 ```
 
-**Error handling:** If boot dispatch returns non-zero, the daemon logs a warning but does NOT exit. This is important for 1.1c: a boot pull failure (offline) shouldn't prevent the poll loop from starting. Even in this sub-sprint (where the daemon exits after boot), we establish the pattern.
+**Error handling:** If boot dispatch returns non-zero, the daemon logs a warning but does NOT exit. This is important for 1.3: a boot pull failure (offline) shouldn't prevent the poll loop from starting. Even in this sub-sprint (where the daemon exits after boot), we establish the pattern.
 
 ---
 
@@ -114,12 +114,12 @@ Update the `cd_main` function from Sprint 1.1a:
 
 | Item | Sprint |
 |------|--------|
-| Runtime poll loop | 1.1c |
-| Graceful shutdown (SIGTERM handler) | 1.1c |
-| WiFi recovery | 1.1d |
-| Log rotation | 1.1d |
-| Notifications (pal_on_sync_result) | 1.1d |
-| Tool PAK UI | 1.2 |
+| Runtime poll loop | 1.3 |
+| Graceful shutdown (SIGTERM handler) | 1.3 |
+| WiFi recovery | 1.4 |
+| Log rotation | 1.4 |
+| Notifications (pal_on_sync_result) | 1.4 |
+| Tool PAK UI | 1.5 |
 
 ---
 
@@ -131,7 +131,7 @@ Update the `cd_main` function from Sprint 1.1a:
 |------|---------|
 | `tests/unit/platforms/nextui/test_daemon_boot.sh` | Unit tests for `cd_boot_dispatch` |
 | `tests/integration/test_daemon_boot_dispatch.sh` | Integration tests: cold start, stale boot, normal boot via daemon |
-| `docs/sprints/sprint-1.1b-spec.md` | This spec |
+| `docs/sprints/sprint-1.2-spec.md` | This spec |
 
 ### Files Modified
 
@@ -165,7 +165,7 @@ Update the `cd_main` function from Sprint 1.1a:
 
 ### Cold Start End-to-End
 
-12. After enrollment (1.1a), first boot runs cold start.
+12. After enrollment Sprint 1.1, first boot runs cold start.
 13. Cold start syncs device saves to repo and repo saves to device.
 14. Sentinel file is created after cold start.
 15. Commit hash is stored after cold start.
@@ -247,7 +247,7 @@ Source the daemon script, mock core phase functions, verify dispatch logic.
 
 | # | Test | Steps | Expected |
 |---|------|-------|----------|
-| D1 | Cold start on first boot | Enroll via setup.json (1.1a), then power off and on | Log shows "Boot: cold start." Saves synced to repo. Sentinel exists. |
+| D1 | Cold start on first boot | Enroll via setup.json Sprint 1.1, then power off and on | Log shows "Boot: cold start." Saves synced to repo. Sentinel exists. |
 | D2 | Normal boot pull | Push a save from another device. Power on Brick. | Log shows "Boot: normal." New save appears on device. |
 | D3 | Stale boot recovery | SSH in, `kill -9` the daemon PID, reboot | Log shows "Boot: stale." Pending changes caught up. |
 | D4 | Boot offline resilience | Disable WiFi before boot (or boot out of WiFi range) | Log shows boot dispatch warning. Daemon doesn't crash. |
@@ -265,4 +265,4 @@ Source the daemon script, mock core phase functions, verify dispatch logic.
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] On-device test checklist documented.
-- [ ] Sprint summary written to `docs/sprints/sprint-1.1b-summary.md` on completion.
+- [ ] Sprint summary written to `docs/sprints/sprint-1.2-summary.md` on completion.

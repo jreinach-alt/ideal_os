@@ -1,8 +1,8 @@
-# Sprint 1.1d — WiFi Recovery, Notifications, Log Management
+# Sprint 1.4 — WiFi Recovery, Notifications, Log Management
 
 **Status:** Draft
 **Date:** 2026-03-16
-**Dependencies:** Sprint 1.1c (poll loop + shutdown), Sprint 0.10 (sync notifications)
+**Dependencies:** Sprint 1.3 (poll loop + shutdown), Sprint 0.10 (sync notifications)
 
 ---
 
@@ -14,13 +14,13 @@ Make the daemon resilient and visible.
 
 **Notifications:** The core's `ss_notify` calls `pal_on_sync_result` if it exists. Until now, the NextUI PAL didn't implement it — notifications fired into the void. This sprint adds `pal_on_sync_result` to the NextUI PAL, displaying colored dots on the Brick's screen via `show2.elf`. Green dot = pushed. Yellow dot = queued offline. Red dot = action required (conflict, error).
 
-**Log management:** The daemon has been writing to a log file since 1.1a. Without rotation, the log grows unbounded. This sprint adds a size check at the end of each poll cycle: if the log exceeds 256 KB, rotate it. Keep one backup. Max disk usage: ~512 KB.
+**Log management:** The daemon has been writing to a log file since Sprint 1.1. Without rotation, the log grows unbounded. This sprint adds a size check at the end of each poll cycle: if the log exceeds 256 KB, rotate it. Keep one backup. Max disk usage: ~512 KB.
 
 ---
 
 ## Reference Specs
 
-- `docs/sprints/sprint-1.1c-spec.md` — Poll loop structure
+- `docs/sprints/sprint-1.3-spec.md` — Poll loop structure
 - `docs/design/pal.md` — `pal_on_sync_result` hook contract, notification behavior
 - `src/core/sync_status.sh` — `ss_notify()` (Sprint 0.10)
 - `src/core/sync_engine.sh` — `se_push()`, `se_has_unpushed_commits()` (Sprint 0.3)
@@ -182,9 +182,9 @@ Add `pal_on_sync_result` — display a colored dot on the Brick's screen.
 
 #### Changes to `cd_poll_loop`
 
-Update the poll loop from Sprint 1.1c:
+Update the poll loop from Sprint 1.3:
 
-**Before (1.1c):**
+**Before (1.3):**
 ```sh
 while true; do
     rp_run "$repo_dir" || pal_log "warn" "Poll cycle failed (rc=$?)"
@@ -192,7 +192,7 @@ while true; do
 done
 ```
 
-**After (1.1d):**
+**After (1.4):**
 ```sh
 while true; do
     cd_wifi_recovery "$repo_dir"
@@ -210,7 +210,7 @@ WiFi recovery runs first (push queued commits before detecting new changes). Log
 
 | Item | Sprint |
 |------|--------|
-| Tool PAK UI (status screen, manual sync, conflict resolution) | 1.2 |
+| Tool PAK UI (status screen, manual sync, conflict resolution) | 1.5 |
 | Notification preferences (disable, quiet hours) | post-1.0 |
 | Notification sound / haptic feedback | post-1.0 |
 | Configurable poll interval | post-1.0 |
@@ -228,7 +228,7 @@ WiFi recovery runs first (push queued commits before detecting new changes). Log
 | `tests/unit/platforms/nextui/test_daemon_resilience.sh` | Unit tests for `cd_wifi_recovery`, `cd_check_log_rotation` |
 | `tests/unit/platforms/nextui/test_pal_notifications.sh` | Unit tests for `pal_on_sync_result` |
 | `tests/integration/test_daemon_wifi_recovery.sh` | Integration test: offline → online transition, queued commits pushed |
-| `docs/sprints/sprint-1.1d-spec.md` | This spec |
+| `docs/sprints/sprint-1.4-spec.md` | This spec |
 
 ### Files Modified
 
@@ -374,13 +374,13 @@ WiFi recovery runs first (push queued commits before detecting new changes). Log
 - [ ] All shell code passes `shellcheck` and `busybox ash -n`.
 - [ ] No banned BusyBox ash constructs.
 - [ ] On-device test checklist documented.
-- [ ] Sprint summary written to `docs/sprints/sprint-1.1d-summary.md` on completion.
+- [ ] Sprint summary written to `docs/sprints/sprint-1.4-summary.md` on completion.
 
 ---
 
 ## Sprint 1.1 Completion
 
-When all four sub-sprints (1.1a through 1.1d) are complete, the NextUI daemon is fully functional:
+When all four sprints (1.1 through 1.4) are complete, the NextUI daemon is fully functional:
 
 - Starts on boot via `auto.sh`
 - Prevents duplicate instances via PID file
@@ -392,4 +392,4 @@ When all four sub-sprints (1.1a through 1.1d) are complete, the NextUI daemon is
 - Shuts down cleanly on SIGTERM
 - Rotates logs to stay within disk budget
 
-The daemon is ready for real-world use on a TrimUI Brick. Sprint 1.2 (Tool PAK UI) adds the user-facing status screen and conflict resolution interface.
+The daemon is ready for real-world use on a TrimUI Brick. Sprint 1.5 (Tool PAK UI) adds the user-facing status screen and conflict resolution interface.
