@@ -19,5 +19,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Build output
-build/
+# Build output (intermediate artifacts)
+build/*
+!build/Continuity.pak/
