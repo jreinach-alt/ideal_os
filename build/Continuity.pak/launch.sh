@@ -1,4 +1,6 @@
 #!/bin/sh
+# shellcheck shell=ash  # BusyBox ash target — local is supported
+# shellcheck disable=SC3043,SC1091
 # Continuity Tool PAK — launch.sh
 # Entry point when user opens "Continuity" from the NextUI Tools menu.
 #
@@ -18,17 +20,44 @@ SHOW2="${PAK_DIR}/bin/show2.elf"
 if [ ! -x "$SHOW2" ]; then
     SHOW2="/mnt/SDCARD/.system/tg5040/bin/show2.elf"
 fi
+SHOW2_PID=""
 
-# show_message — display a message to the user
-# Falls back to sleep if show2.elf is not available.
-show_message() {
-    local msg duration
-    msg="$1"
-    duration="${2:-3}"
+# start_display — launch show2.elf daemon for message display
+start_display() {
+    local initial_text
+    initial_text="${1:-Please wait...}"
 
     if [ -x "$SHOW2" ]; then
-        printf '%s\n' "$msg" > /tmp/show2.fifo 2>/dev/null || true
+        "$SHOW2" --mode=daemon --bgcolor=0x000000 --text="$initial_text" &
+        SHOW2_PID=$!
+        sleep 0.5
+    fi
+}
+
+# update_display — update the on-screen message
+update_display() {
+    local msg
+    msg="$1"
+
+    if [ -n "$SHOW2_PID" ]; then
+        printf 'TEXT:%s\n' "$msg" > /tmp/show2.fifo 2>/dev/null || true
+    fi
+}
+
+# stop_display — show a final message, then quit show2.elf
+stop_display() {
+    local msg duration
+    msg="${1:-}"
+    duration="${2:-2}"
+
+    if [ -n "$SHOW2_PID" ]; then
+        if [ -n "$msg" ]; then
+            printf 'TEXT:%s\n' "$msg" > /tmp/show2.fifo 2>/dev/null || true
+        fi
         sleep "$duration"
+        printf 'QUIT\n' > /tmp/show2.fifo 2>/dev/null || true
+        wait "$SHOW2_PID" 2>/dev/null || true
+        SHOW2_PID=""
     else
         sleep "$duration"
     fi
@@ -84,25 +113,26 @@ run_enrollment() {
 
 # First run: install boot hook
 if [ ! -f "$HOOK_MARKER" ]; then
-    show_message "Installing Continuity..." 1
+    start_display "Installing Continuity..."
 
     if install_boot_hook; then
-        show_message "Boot hook installed." 1
+        update_display "Boot hook installed."
+        sleep 1
     else
-        show_message "ERROR: Failed to install boot hook." 3
+        stop_display "ERROR: Failed to install boot hook." 3
         exit 1
     fi
 
     # Try enrollment if setup.json present
     if [ -f "/mnt/SDCARD/setup.json" ]; then
-        show_message "Enrolling device..." 1
+        update_display "Enrolling device..."
         if run_enrollment; then
-            show_message "Enrollment complete! Please reboot." 3
+            stop_display "Enrollment complete! Please reboot." 3
         else
-            show_message "Enrollment failed. Check setup.json." 3
+            stop_display "Enrollment failed. Check setup.json." 3
         fi
     else
-        show_message "Place setup.json on SD card and reboot." 3
+        stop_display "Place setup.json on SD card and reboot." 3
     fi
 
     exit 0
@@ -113,12 +143,15 @@ if [ -f "$LOG_FILE" ]; then
     # Get last sync status from log
     last_status=$(grep -E "(Sync complete|Push complete|Pull complete|Enrollment complete)" "$LOG_FILE" 2>/dev/null | tail -1)
     if [ -n "$last_status" ]; then
-        show_message "$last_status" 3
+        start_display "$last_status"
+        stop_display "" 3
     else
-        show_message "Continuity is running." 3
+        start_display "Continuity is running."
+        stop_display "" 3
     fi
 else
-    show_message "Continuity daemon not yet started. Reboot device." 3
+    start_display "Continuity daemon not yet started. Reboot device."
+    stop_display "" 3
 fi
 
 exit 0
