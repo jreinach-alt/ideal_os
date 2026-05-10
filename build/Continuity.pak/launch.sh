@@ -8,12 +8,13 @@
 # enrollment if setup.json present, tells user to reboot.
 # Subsequent runs: shows sync status.
 
-# Debug log at SD card root — visible without showing hidden files
-DEBUG_LOG="/mnt/SDCARD/continuity_debug.log"
-exec 2>>"$DEBUG_LOG"
+# Match standard PAK pattern: cd into PAK directory first
+cd $(dirname "$0")
+
+# Debug log inside PAK directory — always visible next to launch.sh
+exec 2>>./launch_debug.log
 set -x
 
-PAK_DIR="$(dirname "$0")"
 USERDATA_PATH="${USERDATA_PATH:-/mnt/SDCARD/.userdata/tg5040}"
 AUTO_SH="$USERDATA_PATH/auto.sh"
 CONTINUITY_HOME="/mnt/SDCARD/.continuity"
@@ -22,10 +23,7 @@ HOOK_MARKER="$CONTINUITY_HOME/.hook_installed"
 mkdir -p "$CONTINUITY_HOME" || true
 
 # show2.elf for displaying messages (if available)
-SHOW2="${PAK_DIR}/bin/show2.elf"
-if [ ! -x "$SHOW2" ]; then
-    SHOW2="/mnt/SDCARD/.system/tg5040/bin/show2.elf"
-fi
+SHOW2="/mnt/SDCARD/.system/tg5040/bin/show2.elf"
 SHOW2_PID=""
 
 # Logo image — show2.elf requires --image
@@ -75,8 +73,9 @@ stop_display() {
 
 # install_boot_hook — add Continuity daemon start to auto.sh
 install_boot_hook() {
-    local hook_line
-    hook_line="\"$PAK_DIR/scripts/continuity_daemon.sh\" &"
+    local hook_line pak_abs
+    pak_abs="$(pwd)"
+    hook_line="\"$pak_abs/scripts/continuity_daemon.sh\" &"
 
     mkdir -p "$USERDATA_PATH"
 
@@ -105,13 +104,13 @@ run_enrollment() {
     fi
 
     # Source PAL and core modules for enrollment
-    export CONTINUITY_PAK_DIR="$PAK_DIR"
-    . "$PAK_DIR/scripts/pal_nextui.sh"
-    . "$PAK_DIR/scripts/core/pal.sh"
-    . "$PAK_DIR/scripts/core/path_mapper.sh"
-    . "$PAK_DIR/scripts/core/sync_engine.sh"
-    . "$PAK_DIR/scripts/core/enrollment.sh"
-    . "$PAK_DIR/scripts/enroll_sd_card.sh"
+    export CONTINUITY_PAK_DIR="$(pwd)"
+    . ./scripts/pal_nextui.sh
+    . ./scripts/core/pal.sh
+    . ./scripts/core/path_mapper.sh
+    . ./scripts/core/sync_engine.sh
+    . ./scripts/core/enrollment.sh
+    . ./scripts/enroll_sd_card.sh
 
     if esd_import; then
         return 0
