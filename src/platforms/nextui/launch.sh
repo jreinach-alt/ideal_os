@@ -15,6 +15,12 @@ CONTINUITY_HOME="/mnt/SDCARD/.continuity"
 LOG_FILE="$CONTINUITY_HOME/continuity.log"
 HOOK_MARKER="$CONTINUITY_HOME/.hook_installed"
 
+# Debug logging — user can read this by pulling the SD card
+mkdir -p "$CONTINUITY_HOME"
+DEBUG_LOG="$CONTINUITY_HOME/launch_debug.log"
+exec 2>>"$DEBUG_LOG"
+set -x
+
 # show2.elf for displaying messages (if available)
 SHOW2="${PAK_DIR}/bin/show2.elf"
 if [ ! -x "$SHOW2" ]; then
@@ -22,13 +28,17 @@ if [ ! -x "$SHOW2" ]; then
 fi
 SHOW2_PID=""
 
+# Logo image — show2.elf requires --image
+LOGO="/mnt/SDCARD/.system/res/logo.png"
+
 # start_display — launch show2.elf daemon for message display
 start_display() {
     local initial_text
     initial_text="${1:-Please wait...}"
 
-    if [ -x "$SHOW2" ]; then
-        "$SHOW2" --mode=daemon --bgcolor=0x000000 --text="$initial_text" &
+    if [ -x "$SHOW2" ] && [ -f "$LOGO" ]; then
+        "$SHOW2" --mode=daemon --image="$LOGO" --bgcolor=0x000000 \
+            --logoheight=1 --text="$initial_text" --fontsize=28 &
         SHOW2_PID=$!
         sleep 0.5
     fi
@@ -119,7 +129,9 @@ if [ ! -f "$HOOK_MARKER" ]; then
         update_display "Boot hook installed."
         sleep 1
     else
-        stop_display "ERROR: Failed to install boot hook." 3
+        update_display "ERROR: Failed to install boot hook."
+        sleep 2
+        stop_display "" 1
         exit 1
     fi
 
@@ -132,26 +144,25 @@ if [ ! -f "$HOOK_MARKER" ]; then
             stop_display "Enrollment failed. Check setup.json." 3
         fi
     else
-        stop_display "Place setup.json on SD card and reboot." 3
+        stop_display "Hook installed. Reboot to start daemon." 3
     fi
 
     exit 0
 fi
 
 # Subsequent runs: show status
+start_display "Continuity"
+
 if [ -f "$LOG_FILE" ]; then
-    # Get last sync status from log
     last_status=$(grep -E "(Sync complete|Push complete|Pull complete|Enrollment complete)" "$LOG_FILE" 2>/dev/null | tail -1)
     if [ -n "$last_status" ]; then
-        start_display "$last_status"
-        stop_display "" 3
+        update_display "$last_status"
     else
-        start_display "Continuity is running."
-        stop_display "" 3
+        update_display "Continuity is running."
     fi
 else
-    start_display "Continuity daemon not yet started. Reboot device."
-    stop_display "" 3
+    update_display "Daemon not started. Reboot device."
 fi
 
+stop_display "" 3
 exit 0
