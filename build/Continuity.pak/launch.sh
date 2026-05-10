@@ -8,18 +8,18 @@
 # enrollment if setup.json present, tells user to reboot.
 # Subsequent runs: shows sync status.
 
+# Debug log at SD card root — visible without showing hidden files
+DEBUG_LOG="/mnt/SDCARD/continuity_debug.log"
+exec 2>>"$DEBUG_LOG"
+set -x
+
 PAK_DIR="$(dirname "$0")"
 USERDATA_PATH="${USERDATA_PATH:-/mnt/SDCARD/.userdata/tg5040}"
 AUTO_SH="$USERDATA_PATH/auto.sh"
 CONTINUITY_HOME="/mnt/SDCARD/.continuity"
 LOG_FILE="$CONTINUITY_HOME/continuity.log"
 HOOK_MARKER="$CONTINUITY_HOME/.hook_installed"
-
-# Debug logging — user can read this by pulling the SD card
-mkdir -p "$CONTINUITY_HOME"
-DEBUG_LOG="$CONTINUITY_HOME/launch_debug.log"
-exec 2>>"$DEBUG_LOG"
-set -x
+mkdir -p "$CONTINUITY_HOME" || true
 
 # show2.elf for displaying messages (if available)
 SHOW2="${PAK_DIR}/bin/show2.elf"
