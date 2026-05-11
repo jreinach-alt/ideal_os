@@ -11,9 +11,17 @@ PLATFORM_DIR="$PROJECT_ROOT/src/platforms/nextui"
 CORE_DIR="$PROJECT_ROOT/src/core"
 CONFIG_DIR="$PROJECT_ROOT/config"
 
-# Verify git binary exists
+# Fall back to the previously-bundled git binary if a fresh cross-compile
+# isn't available. Lets us iterate on launch.sh / scripts without rebuilding
+# git from scratch. Stage it outside $PAK_DIR so the rm -rf below can't eat it.
+if [ ! -f "$GIT_BIN" ] && [ -f "$PAK_DIR/bin/git" ]; then
+    GIT_BIN="$PROJECT_ROOT/build/git.preserved"
+    cp "$PAK_DIR/bin/git" "$GIT_BIN"
+fi
+
 if [ ! -f "$GIT_BIN" ]; then
-    printf 'ERROR: Git binary not found at %s\n' "$GIT_BIN" >&2
+    printf 'ERROR: Git binary not found at %s or %s\n' \
+        "$PROJECT_ROOT/build/aarch64/prefix/bin/git" "$PAK_DIR/bin/git" >&2
     printf 'Run scripts/build_git.sh first.\n' >&2
     exit 1
 fi

@@ -1,4 +1,6 @@
 #!/bin/sh
+# shellcheck shell=ash  # BusyBox ash target — local is supported
+# shellcheck disable=SC3043
 # Continuity OTA Update — pull latest PAK from GitHub
 # Uses curl + GitHub API to download and extract new PAK version.
 # Preserves local state (.continuity/ directory is separate from PAK).
