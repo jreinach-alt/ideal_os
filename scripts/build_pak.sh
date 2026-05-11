@@ -65,6 +65,21 @@ printf '%s\n' "0.1.0-$(date '+%Y%m%d')" > "$PAK_DIR/version.txt"
 find "$PAK_DIR" -name "*.sh" -exec chmod +x {} +
 chmod +x "$PAK_DIR/bin/git"
 
+# ── Line-ending sanity check ─────────────────────────────────────────
+# CRLF in any shell script makes the kernel exec fail silently on the
+# device (it reads `#!/bin/sh\r` as the interpreter path). Catch this
+# at build time, not after the user has copied the PAK to their SD card.
+
+cr=$(printf '\r')
+crlf_files=$(find "$PAK_DIR" \( -name '*.sh' -o -name '*.json' -o -name '*.txt' \) \
+                 -exec grep -lU "$cr" {} + 2>/dev/null || true)
+if [ -n "$crlf_files" ]; then
+    printf 'ERROR: CRLF line endings detected in PAK files:\n' >&2
+    printf '  %s\n' $crlf_files >&2
+    printf 'NextUI cannot exec scripts with CRLF; fix the source and rebuild.\n' >&2
+    exit 1
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 file_count=$(find "$PAK_DIR" -type f | wc -l)
