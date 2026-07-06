@@ -203,34 +203,93 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 **Goal:** Working save sync on a TrimUI Brick. Core sync is already built — this phase wraps it in platform-specific daemon lifecycle and user-facing UI.
 
-### Sprint 1.1 — NextUI Daemon
+### Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Planned
+**Status:** Draft
 
 **Scope:**
-- Implement `src/platforms/nextui/continuity_daemon.sh` — main daemon loop
-- Sources NextUI PAL, then core modules
-- `auto.sh` hook integration for boot-time launch
-- PID file management (prevent duplicate instances)
-- Boot: detect state (cold start vs normal boot vs stale boot) → run appropriate sync phase
-- Runtime: poll loop calling `runtime_poll` at 30-second intervals
-- Graceful shutdown on SIGTERM (final push attempt, update sentinel)
-- Manual test checklist for on-device validation
+- Implement `src/platforms/nextui/continuity_daemon.sh` — daemon skeleton
+- `auto.sh` boot hook for NextUI (non-blocking, starts daemon in background)
+- PID file management in `/tmp/` (prevent duplicate instances, auto-cleanup on reboot)
+- Module loading: source NextUI PAL + all core modules in dependency order
+- Enrollment integration: detect `setup.json`, run SD card enrollment, verify enrolled state
+- Log file setup (stderr redirect to `/mnt/SDCARD/.continuity/continuity.log`)
 
 **Acceptance Criteria:**
 - Daemon starts on boot via auto.sh
-- Correctly dispatches to cold start, boot pull, or stale boot on startup
-- Runtime poll detects changes within 30 seconds
-- Commits and pushes when WiFi is available
-- Queues commits locally when offline, pushes when connectivity returns
-- Clean shutdown on SIGTERM with sentinel update
-- Core tests pass under `busybox ash`
+- PID file prevents duplicate instances
+- Enrollment runs automatically when `setup.json` is present
+- Daemon exits cleanly after enrollment (boot dispatch in Sprint 1.2)
+- All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.8 (all core sync phases + conflict handler)
+**Dependencies:** Sprint 0.10 (all core modules complete)
 
 ---
 
-### Sprint 1.2 — NextUI Tool PAK
+### Sprint 1.2 — Boot Dispatch
+
+**Status:** Draft
+
+**Scope:**
+- Boot phase detection: cold start (no sentinel) vs stale boot (sentinel + no clean_shutdown) vs normal boot (sentinel + clean_shutdown)
+- Dispatch to `cs_run`, `sb_run`, or `bp_run` accordingly
+- Clean shutdown marker consumed on normal boot
+- Boot dispatch errors are non-fatal (logged, daemon continues)
+
+**Acceptance Criteria:**
+- Correctly dispatches to cold start, boot pull, or stale boot on startup
+- Saves synced to/from repo during boot
+- Boot failures do not prevent daemon from continuing
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.1 (daemon bootstrap + enrollment)
+
+---
+
+### Sprint 1.3 — Poll Loop + Graceful Shutdown
+
+**Status:** Draft
+
+**Scope:**
+- Runtime poll loop: call `rp_run` every 30 seconds
+- SIGTERM handler: final push attempt, conditional clean shutdown marker, PID cleanup
+- Trap set after boot dispatch (not before)
+- Clean shutdown marker written only when no unpushed commits remain
+
+**Acceptance Criteria:**
+- Runtime poll detects changes within 30 seconds
+- Commits and pushes when WiFi is available
+- Clean shutdown on SIGTERM with final push
+- After clean shutdown → next boot is normal boot pull
+- After unclean shutdown (SIGKILL) → next boot is stale recovery
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.2 (boot dispatch)
+
+---
+
+### Sprint 1.4 — WiFi Recovery, Notifications, Log Management
+
+**Status:** Draft
+
+**Scope:**
+- WiFi recovery: push queued commits when connectivity returns (checked at poll-loop top)
+- `pal_on_sync_result` implementation in NextUI PAL (colored dots via `show2.elf`)
+- Log rotation: size-based (256 KB), 1 backup, ~512 KB max disk usage
+
+**Acceptance Criteria:**
+- Queues commits locally when offline, pushes when connectivity returns
+- Green/yellow dots appear transiently on sync events
+- Red dot persists for conflicts/errors
+- Graceful degradation if `show2.elf` unavailable
+- Log stays bounded at ~512 KB
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.3 (poll loop + shutdown)
+
+---
+
+### Sprint 1.5 — NextUI Tool PAK
 
 **Status:** Planned
 
@@ -248,7 +307,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 - Conflict resolution presents all `.local` files with device names
 - Unlink removes device registration and clears credentials
 
-**Dependencies:** Sprint 1.1 (daemon running)
+**Dependencies:** Sprint 1.4 (full daemon running)
 
 ---
 
