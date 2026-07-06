@@ -74,6 +74,39 @@ Full suite: **27 test files, 0 failures**, all under `busybox ash`.
   over from the pre-QA implementation; left in place, covered by the
   shutdown/poll tests only incidentally).
 
+## Addendum (2026-07-06, later): enrollment UX hardening after on-device hang
+
+First on-device enrollment attempt hung indefinitely at "Enrolling
+device..." and required a hard power-off. Two hang vectors existed:
+git prompting for credentials on /dev/tty when the credential helper
+fails (blocks forever — the device has no keyboard), and a stalled
+network transfer with no timeout. Neither path produced any log.
+
+Changes:
+
+- `enroll_sd_card.sh` — `esd_import` now exports `GIT_TERMINAL_PROMPT=0`
+  (credential prompt becomes a fast failure) and
+  `GIT_HTTP_LOW_SPEED_LIMIT/TIME` (abort transfers under 1 KB/s for 30s).
+  Applies to both the launch.sh and daemon enrollment paths.
+- `enroll_ui.sh` (new) — enrollment supervisor for the Tool PAK:
+  `esd_import` runs backgrounded with all output captured to
+  `.continuity/enroll.log`; the foreground loop mirrors the newest log
+  line to the screen via the show2 daemon FIFO, reads face buttons from
+  the kernel joystick device (`/dev/input/js0`, 8-byte js_event records;
+  tg5040 numbers B=0, Y=2, X=3 per upstream `platform.h`), and enforces a
+  ~3-minute watchdog. **B cancels** (child + bundled git killed;
+  `setup.json` is preserved for retry), **X/Y replays** the last 12 log
+  lines one at a time, unmapped button numbers are logged so a
+  differently-mapped device self-documents on first press. Missing js0
+  degrades gracefully (buttons off, watchdog still active).
+- `launch.sh` — enrollment branch now uses the supervisor; distinct
+  end-states for enrolled / failed (last error line shown) / cancelled /
+  timed out, always pointing at the log file.
+- Tests: `tests/unit/nextui/test_enroll_ui.sh` (22 assertions) covers
+  binary js_event decoding (presses vs releases/axis/init noise),
+  cancel, watchdog, log replay, live mirroring with timestamp stripping,
+  64-char display truncation, and failure-code normalization.
+
 ## Open Items
 
 1. **On-device validation checklist not yet run** (specs 1.1 D1–D6, 1.2

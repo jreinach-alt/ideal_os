@@ -94,14 +94,15 @@ if [ ! -f "$HOOK_MARKER" ]; then
         # Verify all sourced modules are present before touching any of them.
         for f in scripts/pal_nextui.sh scripts/core/pal.sh \
                  scripts/core/path_mapper.sh scripts/core/sync_engine.sh \
-                 scripts/core/enrollment.sh scripts/enroll_sd_card.sh; do
+                 scripts/core/enrollment.sh scripts/enroll_sd_card.sh \
+                 scripts/enroll_ui.sh; do
             if [ ! -f "./$f" ]; then
                 show_simple "Continuity install corrupt: missing $f" 5
                 exit 1
             fi
         done
 
-        show_daemon_start "Enrolling device..."
+        show_daemon_start "Enrolling device...  (B cancels, X/Y shows log)"
 
         CONTINUITY_PAK_DIR="$(pwd)"
         export CONTINUITY_PAK_DIR
@@ -111,12 +112,24 @@ if [ ! -f "$HOOK_MARKER" ]; then
         . ./scripts/core/sync_engine.sh
         . ./scripts/core/enrollment.sh
         . ./scripts/enroll_sd_card.sh
+        . ./scripts/enroll_ui.sh
 
-        if esd_import; then
-            show_daemon_text "Enrolled! Reboot to start syncing."
-        else
-            show_daemon_text "Enrollment failed. Check setup.json."
-        fi
+        # Supervised enrollment: live log line on screen, B cancels,
+        # X/Y replays the log, watchdog kills a stuck run. Everything is
+        # logged to .continuity/enroll.log regardless of outcome.
+        ENROLL_LOG="$CONTINUITY_HOME/enroll.log"
+        rc=0
+        eui_run_enrollment "$ENROLL_LOG" || rc=$?
+
+        case "$rc" in
+            0)  show_daemon_text "Enrolled! Reboot to start syncing." ;;
+            2)  show_daemon_text "Enrollment cancelled. Launch again to retry." ;;
+            3)  show_daemon_text "Enrollment timed out. Log: SD/.continuity/enroll.log" ;;
+            *)  last_err=$(grep -i "error" "$ENROLL_LOG" 2>/dev/null | tail -1 | cut -c1-64)
+                show_daemon_text "${last_err:-Enrollment failed.}"
+                sleep 4
+                show_daemon_text "Full log: SD card/.continuity/enroll.log" ;;
+        esac
 
         sleep 3
         show_daemon_stop

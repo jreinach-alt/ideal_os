@@ -44,6 +44,7 @@ cp "$PLATFORM_DIR/launch.sh" "$PAK_DIR/launch.sh"
 cp "$PLATFORM_DIR/continuity_daemon.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/pal_nextui.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/enroll_sd_card.sh" "$PAK_DIR/scripts/"
+cp "$PLATFORM_DIR/enroll_ui.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/update.sh" "$PAK_DIR/scripts/"
 
 # Core modules

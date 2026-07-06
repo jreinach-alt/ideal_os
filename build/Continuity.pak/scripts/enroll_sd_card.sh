@@ -45,6 +45,15 @@ esd_parse_setup_file() {
 # esd_import — full SD card enrollment import
 # Returns: 0 success (or no-op), 1 failure
 esd_import() {
+    # Hang-proof git for headless enrollment: never prompt for credentials
+    # on a tty (a failed credential helper otherwise blocks forever on
+    # /dev/tty — no keyboard exists on this device), and abort transfers
+    # that stall below 1 KB/s for 30s (dead WiFi mid-clone).
+    GIT_TERMINAL_PROMPT=0
+    GIT_HTTP_LOW_SPEED_LIMIT=1000
+    GIT_HTTP_LOW_SPEED_TIME=30
+    export GIT_TERMINAL_PROMPT GIT_HTTP_LOW_SPEED_LIMIT GIT_HTTP_LOW_SPEED_TIME
+
     # Step 1: Detect setup file
     if ! esd_detect_setup_file; then
         return 0
