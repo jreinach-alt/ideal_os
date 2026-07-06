@@ -72,7 +72,7 @@ chmod +x "$PAK_DIR/bin/git"
 
 cr=$(printf '\r')
 crlf_files=$(find "$PAK_DIR" \( -name '*.sh' -o -name '*.json' -o -name '*.txt' \) \
-                 -exec grep -lU "$cr" {} + 2>/dev/null || true)
+                 -exec grep -l "$cr" {} + 2>/dev/null || true)
 if [ -n "$crlf_files" ]; then
     printf 'ERROR: CRLF line endings detected in PAK files:\n' >&2
     printf '  %s\n' $crlf_files >&2
