@@ -1,0 +1,87 @@
+# Sprints 1.1–1.3 — QA + Defect-Fix Summary
+
+**Status:** Complete (QA pass over pre-existing implementation)
+**Date:** 2026-07-06
+
+The daemon code for Sprints 1.1–1.3 was implemented in a prior session
+(commit `2764236`) ahead of spec approval and without tests, and had never
+executed on hardware (the Tool PAK launch path was broken until the canary
+test confirmed execution — see `docs/design/pak-launch-failure-findings.md`).
+This pass QA'd that implementation against the three sprint specs, fixed
+the defects found, and added the missing test coverage. It also applied
+the post-canary launch.sh observability fix.
+
+## Defects Found and Fixed
+
+| # | Severity | Defect | Fix |
+|---|----------|--------|-----|
+| 1 | **P0** | Every core phase call in the daemon (`cs_is_cold_start`, `cs_run`, `sb_is_stale`, `sb_run`, `bp_run`, `rp_run`, `sb_mark_clean_shutdown`) was made **without the required `repo_dir` argument**. `cs_is_cold_start ""` tests `/.continuity/sentinel` (never exists) → every boot dispatched to cold start against an empty path; every poll cycle errored. | All phase calls now pass `$CONTINUITY_REPO_DIR` / the dispatch parameter. Pinned by unit tests asserting the argument value received by each phase. |
+| 2 | **P0** | `pal_nextui.sh` hardcoded the PAK at `/mnt/SDCARD/Tools/Continuity.pak/` — **missing the `tg5040` platform directory** — so `CONTINUITY_GIT_BIN` and the platform-map path pointed at nonexistent files and `pal_init` failed on every boot even when enrolled. | Both paths now derive from `CONTINUITY_PAK_DIR` (exported by the daemon from its own location; Brick default as fallback). |
+| 3 | **P1** | Fresh-enrollment boots skipped `pal_validate` and `pm_load_platform_map` entirely (the deferred-init branch never re-ran them after enrollment), so the first sync after enrollment ran with no platform map. | `cd_main` now has a single unconditional init block (pal_init → pal_validate → se_init → pm_load_platform_map) after the enrollment check, each step fatal-with-cleanup on failure. |
+| 4 | **P1** | Normal boot never consumed the clean-shutdown marker (spec 1.2 requires it), so after the first clean shutdown, every subsequent crash was misclassified as a normal boot and stale recovery never ran. | `cd_boot_dispatch` calls `sb_clear_shutdown_marker` on the normal-boot path. Pinned by unit test. |
+| 5 | **P1** | `cd_boot_dispatch` swallowed phase exit codes (spec 1.2 AC 5/8-11: codes must propagate; caller logs and continues). | Dispatch returns the phase's code; `cd_main` captures it and logs a warning without exiting. |
+| 6 | **P2** | Bare `se_init`/`pm_load_platform_map`/`sb_mark_clean_shutdown` calls under `set -e`: a failure either killed the daemon with no log (in `cd_main`) or aborted the SIGTERM handler before PID cleanup (in `cd_shutdown`). | All guarded with explicit error handling; the shutdown handler now always reaches `cd_remove_pid` and `exit 0`. |
+| 7 | **P2** | The auto.sh hook line left the daemon attached to the boot shell's stdio (git output leaked to the MinUI console; risk of blocking on a closed descriptor). | Hook line now fully detaches: `</dev/null >/dev/null 2>&1 &`. |
+| 8 | **P3** | `launch.sh` gated all debug output behind `CONTINUITY_DEBUG`, which nothing on the device can set — a failed launch would have been invisible again. | Unconditional one-line breadcrumb appended to `<PAK>/launch.log` on every launch; xtrace remains behind `CONTINUITY_DEBUG`. |
+
+## Files Modified
+
+- `src/platforms/nextui/continuity_daemon.sh` — defects 1, 3, 4, 5, 6; added
+  test hooks (`CONTINUITY_PID_FILE`/`CONTINUITY_POLL_INTERVAL` env overrides,
+  `CONTINUITY_DAEMON_NO_MAIN` source guard).
+- `src/platforms/nextui/pal_nextui.sh` — defect 2.
+- `src/platforms/nextui/launch.sh` — defects 7, 8; `CONTINUITY_HOME` /
+  `CONTINUITY_SD_ROOT` overridable for tests.
+- `build/Continuity.pak/` — rebuilt via `scripts/build_pak.sh` with all of
+  the above.
+- `docs/sprints/sprint-1.{1,2,3}-spec.md` — status → "Implemented — pending
+  user approval"; QA-correction notes (including the Sprint 1.1 per-PAK
+  `auto.sh` premise, which does not exist in NextUI).
+- `docs/roadmap.md` — Sprint 1.1–1.3 statuses updated.
+
+## Tests Written
+
+- `tests/unit/nextui/test_continuity_daemon.sh` — 51 assertions against the
+  sprint acceptance criteria: PID lifecycle (live/stale/garbage/absent),
+  module loading (happy path + missing-module exit/PID cleanup), enrollment
+  check (enrolled / no setup.json / fresh success / failure), boot dispatch
+  (phase selection, repo_dir propagation, marker consumption, rc
+  propagation), shutdown marker logic (clean / push-success / push-failure /
+  offline).
+- `tests/unit/nextui/test_launch_sh.sh` — 16 assertions: hook install with
+  pre-existing auto.sh preserved, stdio-detached hook line, idempotency,
+  breadcrumb accumulation, first-run and status-run show2 messages.
+- `tests/integration/test_daemon_lifecycle.sh` — 14 assertions: the real
+  daemon as a background process against a real git remote — normal-boot
+  dispatch, marker consumption, poll-loop push of a changed save,
+  duplicate-instance refusal, SIGTERM → final push → clean marker → PID
+  cleanup → exit 0.
+
+Full suite: **27 test files, 0 failures**, all under `busybox ash`.
+
+## Deviations from Spec
+
+- Sprint 1.1 Part 1 (per-PAK `auto.sh`) replaced by launch.sh-installed
+  global `$USERDATA_PATH/auto.sh` hook — NextUI has no per-PAK hook
+  (see spec addendum).
+- Sprint 1.1 Part 7: git cross-compile uses plain `gcc-aarch64-linux-gnu`
+  + static deps, not the Docker toolchain.
+- Sprint 1.3: constant named `CONTINUITY_POLL_INTERVAL`, env-overridable
+  (tests run at 1s).
+- `cd_check_enrollment` no longer re-inits PAL/sync-engine itself; the
+  unified init block in `cd_main` covers both enrollment paths.
+- Sprint 1.4's WiFi-recovery push already exists in the poll loop (carried
+  over from the pre-QA implementation; left in place, covered by the
+  shutdown/poll tests only incidentally).
+
+## Open Items
+
+1. **On-device validation checklist not yet run** (specs 1.1 D1–D6, 1.2
+   D1+): needs the physical Brick — first enrollment via `setup.json`,
+   cold start, reboot cycles, crash recovery.
+2. **Static git binary unverified on hardware**: cross-compiles and is
+   bundled, but `git clone https://` has never run on the Brick.
+3. **Sprint 1.4 remainder**: log rotation and `pal_on_sync_result`
+   colored-dot notifications (core `ss_notify` exists; NextUI PAL side
+   not implemented).
+4. **Spec approval**: 1.1–1.3 marked "Implemented — pending user approval".

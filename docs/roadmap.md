@@ -205,7 +205,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Draft
+**Status:** Implemented — pending approval (QA'd 2026-07-06, see sprint-1.1-1.3-summary.md)
 
 **Scope:**
 - Implement `src/platforms/nextui/continuity_daemon.sh` — daemon skeleton
@@ -228,7 +228,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.2 — Boot Dispatch
 
-**Status:** Draft
+**Status:** Implemented — pending approval (QA'd 2026-07-06)
 
 **Scope:**
 - Boot phase detection: cold start (no sentinel) vs stale boot (sentinel + no clean_shutdown) vs normal boot (sentinel + clean_shutdown)
@@ -248,7 +248,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.3 — Poll Loop + Graceful Shutdown
 
-**Status:** Draft
+**Status:** Implemented — pending approval (QA'd 2026-07-06)
 
 **Scope:**
 - Runtime poll loop: call `rp_run` every 30 seconds

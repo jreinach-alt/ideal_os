@@ -7,17 +7,24 @@
 #
 # Set CONTINUITY_DEBUG=1 in the calling environment to capture an xtrace
 # log to ./launch_debug.log inside the PAK directory.
+#
+# CONTINUITY_HOME and CONTINUITY_SD_ROOT are overridable for off-device
+# testing; on the device they default to the SD card paths.
 
 cd "$(dirname "$0")" || exit 1
 
+# One-line breadcrumb on every launch, before anything can fail — a launch
+# that produces no visible output must never be invisible in the logs too.
+printf '%s launch.sh started\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> ./launch.log
+
 if [ -n "$CONTINUITY_DEBUG" ]; then
-    date >> ./launch_debug.log
     exec 2>>./launch_debug.log
     set -x
 fi
 
 LOGO="/mnt/SDCARD/.system/res/logo.png"
-CONTINUITY_HOME="/mnt/SDCARD/.continuity"
+SD_ROOT="${CONTINUITY_SD_ROOT:-/mnt/SDCARD}"
+CONTINUITY_HOME="${CONTINUITY_HOME:-/mnt/SDCARD/.continuity}"
 HOOK_MARKER="$CONTINUITY_HOME/.hook_installed"
 FIFO="/tmp/show2.fifo"
 SHOW_PID=""
@@ -64,15 +71,17 @@ if [ ! -f "$HOOK_MARKER" ]; then
     AUTO_SH="$USERDATA_PATH/auto.sh"
 
     # Idempotently append the daemon launch into the global auto.sh hook.
+    # The daemon is fully detached from the boot shell's stdio: it manages
+    # its own log file, and a daemon holding the boot console open is the
+    # kind of thing that hangs a boot sequence.
     if ! grep -qF "continuity_daemon.sh" "$AUTO_SH" 2>/dev/null; then
         mkdir -p "$USERDATA_PATH"
         pak_abs="$(pwd)"
+        hook_line="\"$pak_abs/scripts/continuity_daemon.sh\" </dev/null >/dev/null 2>&1 &"
         if [ -f "$AUTO_SH" ]; then
-            printf '\n# Continuity save sync daemon\n"%s/scripts/continuity_daemon.sh" &\n' \
-                "$pak_abs" >> "$AUTO_SH"
+            printf '\n# Continuity save sync daemon\n%s\n' "$hook_line" >> "$AUTO_SH"
         else
-            printf '#!/bin/sh\n# Continuity save sync daemon\n"%s/scripts/continuity_daemon.sh" &\n' \
-                "$pak_abs" > "$AUTO_SH"
+            printf '#!/bin/sh\n# Continuity save sync daemon\n%s\n' "$hook_line" > "$AUTO_SH"
             chmod +x "$AUTO_SH"
         fi
     fi
@@ -81,7 +90,7 @@ if [ ! -f "$HOOK_MARKER" ]; then
 
     # If a setup.json is staged on the SD card, run enrollment now so the
     # user sees the result immediately rather than after a reboot.
-    if [ -f "/mnt/SDCARD/setup.json" ]; then
+    if [ -f "$SD_ROOT/setup.json" ]; then
         # Verify all sourced modules are present before touching any of them.
         for f in scripts/pal_nextui.sh scripts/core/pal.sh \
                  scripts/core/path_mapper.sh scripts/core/sync_engine.sh \

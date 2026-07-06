@@ -2,10 +2,18 @@
 # shellcheck shell=ash  # BusyBox ash target — local is supported
 # shellcheck disable=SC3043
 # Continuity Daemon — NextUI (TrimUI Brick)
-# Started via auto.sh boot hook. Manages enrollment, sync, and lifecycle.
+# Started via the $USERDATA_PATH/auto.sh boot hook (installed by launch.sh).
+# Manages enrollment, sync, and lifecycle.
+#
+# Test hooks (all default to production values on the device):
+#   CONTINUITY_PID_FILE       — PID file location
+#   CONTINUITY_LOG_FILE       — log file location
+#   CONTINUITY_POLL_INTERVAL  — seconds between poll cycles
+#   CONTINUITY_PAK_DIR        — PAK root (derived from script path if unset)
+#   CONTINUITY_DAEMON_NO_MAIN — if set, skip cd_main (unit tests source only)
 set -e
 
-readonly CONTINUITY_PID_FILE="/tmp/continuity.pid"
+readonly CONTINUITY_PID_FILE="${CONTINUITY_PID_FILE:-/tmp/continuity.pid}"
 readonly CONTINUITY_VERSION="0.1.0"
 
 # ── PID Management ───────────────────────────────────────────────────
@@ -113,61 +121,76 @@ cd_check_enrollment() {
         return 1
     fi
 
-    # Re-init PAL (device_name now exists)
-    if ! pal_init; then
-        pal_log "error" "PAL init failed after enrollment"
-        return 1
-    fi
-
-    # Re-init sync engine with new device name
-    se_init "$CONTINUITY_REPO_DIR" "$CONTINUITY_DEVICE_NAME"
-
-    pal_log "info" "Enrollment complete: $CONTINUITY_DEVICE_NAME"
+    # Full re-initialization (PAL, sync engine, platform map) happens in
+    # cd_main after this returns — it is identical for the already-enrolled
+    # and fresh-enrollment paths.
+    pal_log "info" "Enrollment complete"
     return 0
 }
 
 # ── Boot Dispatch (Sprint 1.2) ──────────────────────────────────────
 
-# cd_boot_dispatch — route to correct sync phase
+# cd_boot_dispatch — route to the correct sync phase for this boot
+# Usage: cd_boot_dispatch <repo_dir>
+# Returns: the exit code of whichever phase ran (caller decides severity)
 cd_boot_dispatch() {
-    if cs_is_cold_start; then
-        pal_log "info" "Cold start detected — running initial sync"
-        cs_run || pal_log "warn" "Cold start had errors"
-    elif sb_is_stale; then
-        pal_log "info" "Stale boot detected — running recovery"
-        sb_run || pal_log "warn" "Stale boot recovery had errors"
+    local repo_dir rc
+    repo_dir="$1"
+    rc=0
+    if cs_is_cold_start "$repo_dir"; then
+        pal_log "info" "Boot: cold start — first sync"
+        cs_run "$repo_dir" || rc=$?
+    elif sb_is_stale "$repo_dir"; then
+        pal_log "info" "Boot: stale — recovering from unclean shutdown"
+        sb_run "$repo_dir" || rc=$?
     else
-        pal_log "info" "Normal boot — pulling latest saves"
-        bp_run || pal_log "warn" "Boot pull had errors"
+        pal_log "info" "Boot: normal — pulling remote changes"
+        # Consume the one-shot marker so a crash in THIS session is
+        # correctly detected as stale on the next boot.
+        sb_clear_shutdown_marker "$repo_dir" || \
+            pal_log "warn" "Could not clear clean-shutdown marker"
+        bp_run "$repo_dir" || rc=$?
     fi
+    return "$rc"
 }
 
 # ── Poll Loop (Sprint 1.3) ──────────────────────────────────────────
 
-readonly CONTINUITY_POLL_INTERVAL=30
+readonly CONTINUITY_POLL_INTERVAL="${CONTINUITY_POLL_INTERVAL:-30}"
 
 # cd_shutdown — SIGTERM handler
+# Every step is guarded: a trap handler under `set -e` must always reach
+# its cleanup and exit 0, or the PID file and log go stale.
 cd_shutdown() {
-    pal_log "info" "Shutdown signal received"
+    pal_log "info" "Shutdown: SIGTERM received"
 
     # Final push attempt
-    if pal_is_online; then
-        if se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
-            pal_log "info" "Pushing queued commits before shutdown"
-            se_push "$CONTINUITY_REPO_DIR" || pal_log "warn" "Final push failed"
+    if se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
+        if pal_is_online; then
+            if se_push "$CONTINUITY_REPO_DIR"; then
+                pal_log "info" "Shutdown: pushed queued commits"
+            else
+                pal_log "warn" "Shutdown: final push failed"
+            fi
+        else
+            pal_log "info" "Shutdown: offline — commits queued for next boot"
         fi
     fi
 
-    # Mark clean shutdown only if no unpushed commits remain
+    # Mark clean shutdown only if no unpushed commits remain; otherwise the
+    # next boot must run stale recovery, which pushes them first thing.
     if ! se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
-        sb_mark_clean_shutdown
-        pal_log "info" "Clean shutdown marker written"
+        if sb_mark_clean_shutdown "$CONTINUITY_REPO_DIR"; then
+            pal_log "info" "Shutdown: clean shutdown marker written"
+        else
+            pal_log "warn" "Shutdown: failed to write clean shutdown marker"
+        fi
     else
-        pal_log "warn" "Unpushed commits remain — skipping clean shutdown marker"
+        pal_log "warn" "Shutdown: unpushed commits remain — skipping clean marker"
     fi
 
     cd_remove_pid
-    pal_log "info" "Daemon stopped"
+    pal_log "info" "Shutdown: complete"
     exit 0
 }
 
@@ -188,8 +211,10 @@ cd_poll_loop() {
         fi
 
         # Runtime poll
-        rp_run || pal_log "warn" "Poll cycle had errors"
+        rp_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "Poll cycle had errors"
 
+        # Backgrounded sleep + wait: a SIGTERM during the sleep interrupts
+        # `wait` immediately, so shutdown never blocks up to a full interval.
         sleep "$CONTINUITY_POLL_INTERVAL" &
         wait $!
     done
@@ -224,7 +249,8 @@ cd_main() {
     # Load all modules
     cd_load_modules
 
-    # Try PAL init (may fail if not yet enrolled — that's OK)
+    # Try PAL init (may fail if not yet enrolled — that's OK, enrollment
+    # only needs the path variables the PAL sets at source time)
     if ! pal_init; then
         if [ -n "$CONTINUITY_REPO_DIR" ]; then
             pal_log "info" "PAL init deferred (not yet enrolled)"
@@ -233,10 +259,6 @@ cd_main() {
             cd_remove_pid
             exit 1
         fi
-    else
-        pal_validate || { cd_remove_pid; exit 1; }
-        se_init "$CONTINUITY_REPO_DIR" "$CONTINUITY_DEVICE_NAME"
-        pm_load_platform_map "$(pal_get_platform_map)"
     fi
 
     # Enrollment check
@@ -245,21 +267,32 @@ cd_main() {
         exit 1
     fi
 
-    # Post-enrollment: ensure PAL is fully initialized
-    if [ -z "$CONTINUITY_DEVICE_NAME" ]; then
-        pal_init || { pal_log "error" "PAL init failed after enrollment"; cd_remove_pid; exit 1; }
-        pal_validate || { cd_remove_pid; exit 1; }
-        se_init "$CONTINUITY_REPO_DIR" "$CONTINUITY_DEVICE_NAME"
-        pm_load_platform_map "$(pal_get_platform_map)"
-    fi
+    # Full initialization — one path for both already-enrolled and
+    # fresh-enrollment boots. Each step is fatal if it fails: a daemon
+    # with a half-initialized PAL or no platform map must not sync.
+    pal_init || { pal_log "error" "PAL init failed after enrollment"; cd_remove_pid; exit 1; }
+    pal_validate || { pal_log "error" "PAL validation failed"; cd_remove_pid; exit 1; }
+    se_init "$CONTINUITY_REPO_DIR" "$CONTINUITY_DEVICE_NAME" || \
+        { pal_log "error" "Sync engine init failed"; cd_remove_pid; exit 1; }
+    pm_load_platform_map "$(pal_get_platform_map)" || \
+        { pal_log "error" "Failed to load platform map"; cd_remove_pid; exit 1; }
 
     pal_log "info" "Bootstrap complete, enrolled as $CONTINUITY_DEVICE_NAME"
 
-    # Boot dispatch
-    cd_boot_dispatch
+    # Boot dispatch — errors are non-fatal: an offline boot pull must not
+    # stop the poll loop from starting (WiFi recovery handles the rest)
+    boot_rc=0
+    cd_boot_dispatch "$CONTINUITY_REPO_DIR" || boot_rc=$?
+    if [ "$boot_rc" -ne 0 ]; then
+        pal_log "warn" "Boot dispatch returned $boot_rc — continuing"
+    fi
 
     # Poll loop (blocks until SIGTERM)
     cd_poll_loop
 }
 
-cd_main "$@"
+# Unit tests source this file with CONTINUITY_DAEMON_NO_MAIN=1 to get the
+# functions without running the daemon.
+if [ -z "$CONTINUITY_DAEMON_NO_MAIN" ]; then
+    cd_main "$@"
+fi

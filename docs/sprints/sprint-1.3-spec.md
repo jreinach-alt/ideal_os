@@ -1,8 +1,16 @@
 # Sprint 1.3 — Poll Loop + Graceful Shutdown
 
-**Status:** Draft
-**Date:** 2026-03-16
+**Status:** Implemented — pending user approval
+**Date:** 2026-03-16 (QA'd 2026-07-06)
 **Dependencies:** Sprint 1.2 (boot dispatch), Sprint 0.6 (runtime poll)
+
+> **QA note (2026-07-06):** implemented with `CONTINUITY_POLL_INTERVAL`
+> (env-overridable for tests, default 30) rather than `CD_POLL_INTERVAL`.
+> The conditional clean-shutdown-marker rule ("push first; only mark clean
+> when nothing unpushed remains") is implemented and pinned by unit tests,
+> including the push-failure and offline paths. The WiFi-recovery push at
+> the top of the poll loop (a Sprint 1.4 item) is already present. See
+> `docs/sprints/sprint-1.1-1.3-summary.md`.
 
 ---
 

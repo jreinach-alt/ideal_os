@@ -1,8 +1,29 @@
 # Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Draft
-**Date:** 2026-03-16
+**Status:** Implemented — pending user approval
+**Date:** 2026-03-16 (QA'd and corrected 2026-07-06)
 **Dependencies:** Sprint 0.3 (enrollment), Sprint 0.2 (PAL, path mapper)
+
+> **QA corrections (2026-07-06)** — the implementation deviates from this
+> draft where the draft was wrong about NextUI; see
+> `docs/sprints/sprint-1.1-1.3-summary.md` for the full QA report:
+>
+> 1. **Part 1 (per-PAK `auto.sh`) is based on a false premise.** NextUI has
+>    no per-PAK `auto.sh` convention — the only boot hook is the single
+>    user script at `$USERDATA_PATH/auto.sh`
+>    (`upstream/.../MinUI.pak/launch.sh:149-152`, confirmed in
+>    `docs/design/nextui-tool-pak-research.md` §7). The implementation
+>    instead has the Tool PAK's `launch.sh` idempotently install the
+>    daemon start line into that global hook on first run. There is no
+>    `src/platforms/nextui/auto.sh` file.
+> 2. **PAK path includes the platform dir:**
+>    `/mnt/SDCARD/Tools/tg5040/Continuity.pak/`, not
+>    `/mnt/SDCARD/Tools/Continuity.pak/`.
+> 3. **`build_git.sh` uses plain `gcc-aarch64-linux-gnu`** with static
+>    zlib/openssl/curl built from source, not the NextUI Docker toolchain.
+>    Output lands at `build/aarch64/prefix/bin/git`.
+> 4. **Unit tests live at `tests/unit/nextui/`** (repo convention), not
+>    `tests/unit/platforms/nextui/`.
 
 ---
 

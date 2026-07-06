@@ -1,8 +1,14 @@
 # Sprint 1.2 — Boot Dispatch
 
-**Status:** Draft
-**Date:** 2026-03-16
+**Status:** Implemented — pending user approval
+**Date:** 2026-03-16 (QA'd 2026-07-06)
 **Dependencies:** Sprint 1.1 (daemon bootstrap + enrollment), Sprint 0.7 (stale boot), Sprint 0.6 (runtime poll), Sprint 0.5 (boot pull), Sprint 0.4 (cold start)
+
+> **QA note (2026-07-06):** the original implementation predating QA called
+> every phase function without the `repo_dir` argument and never consumed
+> the clean-shutdown marker — both fixed to match this spec; unit tests
+> now pin the dispatch table, argument passing, marker consumption, and
+> return-code propagation. See `docs/sprints/sprint-1.1-1.3-summary.md`.
 
 ---
 

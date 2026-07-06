@@ -7,9 +7,14 @@
 CONTINUITY_SAVES_ROOT="/mnt/SDCARD/Saves"
 CONTINUITY_REPO_DIR="/mnt/SDCARD/.continuity/repo"
 CONTINUITY_PLATFORM="nextui"
-CONTINUITY_GIT_BIN="/mnt/SDCARD/Tools/Continuity.pak/bin/git"
 CONTINUITY_SD_ROOT="/mnt/SDCARD"
 # CONTINUITY_DEVICE_NAME is read from enrollment config by pal_init
+
+# The PAK's on-card location varies by platform dir (Tools/tg5040/... on the
+# Brick). The daemon exports CONTINUITY_PAK_DIR from its own script path;
+# fall back to the Brick default when sourced outside the daemon.
+CONTINUITY_PAK_DIR="${CONTINUITY_PAK_DIR:-/mnt/SDCARD/Tools/tg5040/Continuity.pak}"
+CONTINUITY_GIT_BIN="$CONTINUITY_PAK_DIR/bin/git"
 
 # pal_init — read device name from enrollment config and verify git binary
 # Returns 0 on success, 1 if enrollment incomplete or git binary missing.
@@ -46,5 +51,5 @@ pal_log() {
 
 # pal_get_platform_map — print the absolute path to the NextUI platform map
 pal_get_platform_map() {
-    printf '%s\n' "/mnt/SDCARD/Tools/Continuity.pak/config/platform_maps/nextui.json"
+    printf '%s\n' "$CONTINUITY_PAK_DIR/config/platform_maps/nextui.json"
 }
