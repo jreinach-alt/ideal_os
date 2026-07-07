@@ -166,6 +166,26 @@ sb_run() {
         done
     fi
 
+    # Step 4b: Save states — opaque one-way catch-up (device → repo only)
+    local device_states
+    device_states=$(cd_list_device_states 2>/dev/null)
+    if [ -n "$device_states" ]; then
+        printf '%s\n' "$device_states" | while IFS= read -r device_path; do
+            [ -z "$device_path" ] && continue
+            local state_repo_path
+            state_repo_path=$(pm_state_to_repo "$device_path" 2>/dev/null)
+            [ -n "$state_repo_path" ] || continue
+            local state_repo_file
+            state_repo_file="$repo_dir/$state_repo_path"
+            if [ ! -f "$state_repo_file" ] || ! cmp -s "$device_path" "$state_repo_file"; then
+                mkdir -p "$(dirname "$state_repo_file")"
+                cp "$device_path" "$state_repo_file"
+                pal_log "info" "Stale boot: catch-up backed up state $state_repo_path"
+                printf '1\n' > "$_sb_tmpfile"
+            fi
+        done
+    fi
+
     local _sb_changed
     _sb_changed=$(cat "$_sb_tmpfile")
     rm -f "$_sb_tmpfile"

@@ -199,6 +199,28 @@ cs_run() {
         done
     fi
 
+    # Step 5b: Save states — opaque one-way backup (device → repo only)
+    local device_states
+    device_states=$(cd_list_device_states 2>/dev/null)
+    if [ -n "$device_states" ]; then
+        printf '%s\n' "$device_states" | while IFS= read -r local_path; do
+            [ -z "$local_path" ] && continue
+            local repo_path
+            repo_path=$(pm_state_to_repo "$local_path" 2>/dev/null)
+            [ -n "$repo_path" ] || continue
+            local repo_file
+            repo_file="$repo_dir/$repo_path"
+            if [ ! -f "$repo_file" ] || ! cmp -s "$local_path" "$repo_file"; then
+                mkdir -p "$(dirname "$repo_file")"
+                cp "$local_path" "$repo_file" && \
+                    pal_log "info" "Cold start: backed up state $repo_path"
+            fi
+        done
+    fi
+
+    # Scan diagnostics: a silently-blind scanner must name itself
+    pal_log "info" "Cold start scan: $(printf '%s\n' "$device_saves" | grep -c .) saves, $(printf '%s\n' "$device_states" | grep -c .) states (watched dirs: $(pm_list_watched_dirs | grep -c .))"
+
     # Check for copy failures in step 5
     local step5_failure
     step5_failure=$(cat "$cp_fail_tmp")

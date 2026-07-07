@@ -215,6 +215,34 @@ else
     fi
 fi
 
+# ── Scan self-test ───────────────────────────────────────────────────
+# What does THIS device's userland actually see? Settles "the file is
+# right there but nothing syncs" in one tap: counts on screen, full
+# paths in a visible report at the SD root.
+
+check_module "scripts/core/path_mapper.sh"
+check_module "scripts/core/change_detector.sh"
+. ./scripts/core/path_mapper.sh
+. ./scripts/core/change_detector.sh
+pm_load_platform_map "$(pal_get_platform_map)" >/dev/null 2>&1
+scan_watched=$(pm_list_watched_dirs 2>/dev/null | grep -c .)
+scan_found=$(cd_list_device_saves 2>/dev/null | grep -c .)
+scan_states=$(cd_list_device_states 2>/dev/null | grep -c .)
+scan_raw=$(find "${CONTINUITY_SAVES_ROOT:-/mnt/SDCARD/Saves}" \
+    \( -name "*.srm" -o -name "*.sav" \) 2>/dev/null | grep -c .)
+{
+    printf '=== Continuity scan report %s (build %s) ===\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$PAK_VERSION"
+    printf -- '--- watched dirs (%s) ---\n' "$scan_watched"
+    pm_list_watched_dirs 2>/dev/null
+    printf -- '--- saves seen by scanner (%s; raw find: %s) ---\n' "$scan_found" "$scan_raw"
+    cd_list_device_saves 2>/dev/null
+    printf -- '--- states seen by scanner (%s) ---\n' "$scan_states"
+    cd_list_device_states 2>/dev/null
+} > "$SD_ROOT/CONTINUITY_SCAN_REPORT.txt" 2>&1
+sync
+show_simple "Scan: $scan_watched dirs, $scan_found saves (raw $scan_raw), $scan_states states" 4
+
 # ── OTA update check (X installs, B/timeout skips) ──────────────────
 # Card swaps are for binaries and emergencies only: every script fix
 # flows through here, over the same git+TLS stack enrollment proved.

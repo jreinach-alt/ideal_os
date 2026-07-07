@@ -159,3 +159,25 @@ pm_list_watched_dirs() {
         printf '%s/%s\n' "$CONTINUITY_SAVES_ROOT" "$local_dir"
     done
 }
+
+# ── Save states (opaque backup) ──────────────────────────────────────
+# Save states are emulator-core-specific blobs backed up one-way,
+# device → repo, under states/<dir>/<file>. No canonical translation:
+# a state only means anything to the exact core (and often core version)
+# that wrote it. CONTINUITY_STATES_ROOT is set by the platform PAL
+# (NextUI: /mnt/SDCARD/.userdata/shared); empty disables state backup.
+
+# pm_state_to_repo — map an absolute state path to its repo path.
+# Usage: pm_state_to_repo <local_path>
+# Prints e.g. states/SFC-snes9x/Game (USA).st0
+pm_state_to_repo() {
+    local local_path rel_path
+    local_path="$1"
+    [ -n "$CONTINUITY_STATES_ROOT" ] || return 1
+    rel_path=$(printf '%s' "$local_path" | sed "s|^$CONTINUITY_STATES_ROOT/||")
+    if [ "$rel_path" = "$local_path" ]; then
+        pal_log "warn" "State path not under states root: $local_path"
+        return 1
+    fi
+    printf 'states/%s\n' "$rel_path"
+}

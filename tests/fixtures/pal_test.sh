@@ -36,3 +36,5 @@ pal_log() {
 pal_get_platform_map() {
     printf '%s\n' "$TEST_TMPDIR/platform_map.json"
 }
+
+CONTINUITY_STATES_ROOT="${CONTINUITY_STATES_ROOT:-$TEST_TMPDIR/states}"

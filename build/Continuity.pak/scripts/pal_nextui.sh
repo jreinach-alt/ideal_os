@@ -86,3 +86,6 @@ pal_log() {
 pal_get_platform_map() {
     printf '%s\n' "$CONTINUITY_PAK_DIR/config/platform_maps/nextui.json"
 }
+
+# Save states root (opaque one-way backup; empty disables)
+CONTINUITY_STATES_ROOT="${CONTINUITY_STATES_ROOT:-/mnt/SDCARD/.userdata/shared}"

@@ -177,3 +177,27 @@ best-effort state sync — opaque blobs namespaced `states/<tag>-<core>/`,
 delivered only to devices advertising the identical core, never
 conflict-merged, size-capped. Requires its own approved spec; do not
 implement casually.
+
+## The porcelain-quoting trap (the real "no saves" root cause)
+
+`git status --porcelain` C-quotes any path containing spaces, quotes, or
+non-ASCII — i.e. **virtually every real ROM's save filename** — and the
+trailing quote defeated the extension grep in `cd_detect_changes`, so
+spaced files were copied into the repo tree and then silently never
+staged, in every sync phase. Fix: `--porcelain -z` (NUL-delimited output
+is never quoted) piped through `tr '\0' '\n'`. Additionally, phase
+commit gates now treat `cd_detect_changes` output as authoritative (not
+just the current run's copy flag) so files stranded by earlier runs get
+committed. ANY new git-output parsing MUST use -z or quotepath-immune
+plumbing and be tested with `Name (USA).ext` and apostrophe filenames.
+
+## Save states — REVISED decision (owner override, 2026-07-07)
+
+The owner wants states backed up even while non-portable. Shipped as
+opaque one-way backup (device → repo only): `.st0`–`.st9` under
+`$CONTINUITY_STATES_ROOT` (NextUI: `.userdata/shared/<TAG>-<core>/`)
+sync to `states/<dir>/<file>` verbatim, size-capped
+(`CONTINUITY_STATE_MAX_KB`, default 8 MB, shared gate across poll and
+sweep paths). No restore, no merge, no cross-core promises — restore
+semantics need their own spec. Portability position unchanged: states
+load only on the core (version) that wrote them.

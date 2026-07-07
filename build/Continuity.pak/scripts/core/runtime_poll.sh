@@ -25,7 +25,27 @@ rp_find_candidates() {
     sentinel="$repo_dir/.continuity/sentinel"
 
     find "$CONTINUITY_SAVES_ROOT" \( -name "*.srm" -o -name "*.sav" \) -newer "$sentinel" 2>/dev/null || true
+    # Save states (opaque one-way backup) — only when the PAL defines a
+    # root; the shared size gate applies here too.
+    if [ -n "$CONTINUITY_STATES_ROOT" ] && [ -d "$CONTINUITY_STATES_ROOT" ]; then
+        find "$CONTINUITY_STATES_ROOT" -name "*.st[0-9]" -newer "$sentinel" 2>/dev/null | \
+        while IFS= read -r f; do
+            cd_state_size_ok "$f" || continue
+            printf '%s\n' "$f"
+        done
+    fi
     return 0
+}
+
+# rp_map_device_path — repo path for a device file: save dirs map through
+# the platform map; states map to the opaque states/ namespace.
+rp_map_device_path() {
+    local device_path
+    device_path="$1"
+    case "$device_path" in
+        "${CONTINUITY_STATES_ROOT:-/nonexistent}"/*) pm_state_to_repo "$device_path" ;;
+        *)                           pm_local_to_repo "$device_path" ;;
+    esac
 }
 
 # rp_confirm_changes — filter candidates to only genuinely changed files
@@ -45,7 +65,7 @@ rp_confirm_changes() {
 
         local repo_path rc_map
         rc_map=0
-        repo_path=$(pm_local_to_repo "$device_path" 2>/dev/null) || rc_map=$?
+        repo_path=$(rp_map_device_path "$device_path" 2>/dev/null) || rc_map=$?
         if [ "$rc_map" -ne 0 ] || [ -z "$repo_path" ]; then
             pal_log "warn" "Poll confirm: unknown system dir, skipping: $device_path"
             continue
@@ -124,7 +144,7 @@ rp_run() {
 
         local repo_path rc_map
         rc_map=0
-        repo_path=$(pm_local_to_repo "$device_path" 2>/dev/null) || rc_map=$?
+        repo_path=$(rp_map_device_path "$device_path" 2>/dev/null) || rc_map=$?
         if [ "$rc_map" -ne 0 ] || [ -z "$repo_path" ]; then
             pal_log "warn" "Unknown system dir, skipping: $device_path"
             continue

@@ -109,6 +109,9 @@ cp "$ET_REPO_DIR/snes/super_metroid.srm" "$CONTINUITY_SAVES_ROOT/SFC/super_metro
 cp "$ET_REPO_DIR/gba/minish_cap.srm" "$CONTINUITY_SAVES_ROOT/GBA/minish_cap.srm"
 cp "$ET_REPO_DIR/gb/links_awakening.srm" "$CONTINUITY_SAVES_ROOT/GB/links_awakening.srm"
 
+# State size cap must be in the daemon's environment from launch
+export CONTINUITY_STATE_MAX_KB=2
+
 # Fake PAK: real daemon + real core modules, test PAL standing in for the
 # NextUI PAL (same interface, temp-dir paths, always online).
 FAKE_PAK="$TEST_TMPDIR/pak"
@@ -145,6 +148,11 @@ fi
 sleep 1
 printf 'daemon_lifecycle_bytes' > "$CONTINUITY_SAVES_ROOT/SFC/super_metroid.srm"
 
+# Save states: one normal (synced as opaque blob), one oversized (skipped)
+mkdir -p "$CONTINUITY_STATES_ROOT/SFC-snes9x"
+printf 'state_zero_bytes' > "$CONTINUITY_STATES_ROOT/SFC-snes9x/Super Metroid (USA).st0"
+dd if=/dev/zero of="$CONTINUITY_STATES_ROOT/SFC-snes9x/huge.st9" bs=1024 count=3 2>/dev/null
+
 remote_updated() {
     [ "$("$CONTINUITY_GIT_BIN" -C "$ET_REMOTE_DIR" show HEAD:snes/super_metroid.srm 2>/dev/null)" = "daemon_lifecycle_bytes" ]
 }
@@ -152,6 +160,20 @@ if wait_for 20 remote_updated; then
     assert_eq "S1: changed save pushed to remote by poll loop" "ok" "ok"
 else
     assert_eq "S1: changed save pushed to remote by poll loop" "ok" "timeout"
+fi
+
+state_synced() {
+    [ "$("$CONTINUITY_GIT_BIN" -C "$ET_REMOTE_DIR" show "HEAD:states/SFC-snes9x/Super Metroid (USA).st0" 2>/dev/null)" = "state_zero_bytes" ]
+}
+if wait_for 20 state_synced; then
+    assert_eq "S1: save state backed up to remote (opaque blob)" "ok" "ok"
+else
+    assert_eq "S1: save state backed up to remote (opaque blob)" "ok" "timeout"
+fi
+if "$CONTINUITY_GIT_BIN" -C "$ET_REMOTE_DIR" show "HEAD:states/SFC-snes9x/huge.st9" >/dev/null 2>&1; then
+    assert_eq "S1: oversized state skipped" "skipped" "synced"
+else
+    assert_eq "S1: oversized state skipped" "skipped" "skipped"
 fi
 
 assert_log_contains "S1: normal boot dispatched" "Boot: normal"

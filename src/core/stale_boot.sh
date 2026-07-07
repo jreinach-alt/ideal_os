@@ -166,14 +166,38 @@ sb_run() {
         done
     fi
 
+    # Step 4b: Save states — opaque one-way catch-up (device → repo only)
+    local device_states
+    device_states=$(cd_list_device_states 2>/dev/null)
+    if [ -n "$device_states" ]; then
+        printf '%s\n' "$device_states" | while IFS= read -r device_path; do
+            [ -z "$device_path" ] && continue
+            local state_repo_path
+            state_repo_path=$(pm_state_to_repo "$device_path" 2>/dev/null)
+            [ -n "$state_repo_path" ] || continue
+            local state_repo_file
+            state_repo_file="$repo_dir/$state_repo_path"
+            if [ ! -f "$state_repo_file" ] || ! cmp -s "$device_path" "$state_repo_file"; then
+                mkdir -p "$(dirname "$state_repo_file")"
+                cp "$device_path" "$state_repo_file"
+                pal_log "info" "Stale boot: catch-up backed up state $state_repo_path"
+                printf '1\n' > "$_sb_tmpfile"
+            fi
+        done
+    fi
+
     local _sb_changed
     _sb_changed=$(cat "$_sb_tmpfile")
     rm -f "$_sb_tmpfile"
 
-    # Step 5: Commit and push catch-up changes
-    if [ "$_sb_changed" = "1" ]; then
-        local staged
-        staged=$(cd_detect_changes "$repo_dir")
+    # Step 5: Commit and push catch-up changes.
+    # git's view is authoritative, not just this run's copy flag: a file
+    # copied into the repo tree by an EARLIER run that failed to stage
+    # (the porcelain-quoting bug stranded exactly such files) must still
+    # be committed now.
+    local staged
+    staged=$(cd_detect_changes "$repo_dir")
+    if [ "$_sb_changed" = "1" ] || [ -n "$staged" ]; then
         if [ -n "$staged" ]; then
             if ! se_stage_files "$repo_dir" "$staged"; then
                 pal_log "error" "Stale boot: failed to stage catch-up files"
