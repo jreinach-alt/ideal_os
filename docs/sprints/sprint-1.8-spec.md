@@ -1,6 +1,6 @@
 # Sprint 1.8 — Release Channels (OTA rework)
 
-**Status:** Implemented — pending user approval
+**Status:** Complete — merged to main (PR #3, 2026-07-07)
 **Date:** 2026-07-07
 **Dependencies:** Sprint 1.6 (git-based OTA)
 **Trigger:** Owner-caught design flaw at PR time: the 1.6 channel was

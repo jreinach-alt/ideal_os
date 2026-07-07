@@ -1,6 +1,6 @@
 # Sprint 1.3 — Poll Loop + Graceful Shutdown
 
-**Status:** Implemented — pending user approval
+**Status:** Complete — merged to main (PR #3, 2026-07-07)
 **Date:** 2026-03-16 (QA'd 2026-07-06)
 **Dependencies:** Sprint 1.2 (boot dispatch), Sprint 0.6 (runtime poll)
 

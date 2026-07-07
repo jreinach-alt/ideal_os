@@ -202,4 +202,4 @@ Protocol" + "Model Regimen" sections, and the PAL contract addendum in
 3. **Sprint 1.4 remainder**: log rotation and `pal_on_sync_result`
    colored-dot notifications (core `ss_notify` exists; NextUI PAL side
    not implemented).
-4. **Spec approval**: 1.1–1.3 marked "Implemented — pending user approval".
+4. **Spec approval**: 1.1–1.3 marked "Complete — merged to main (PR #3, 2026-07-07)".

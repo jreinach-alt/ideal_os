@@ -1,7 +1,7 @@
 # Sprint 1.7 Summary — Vendored Interpreter (BusyBox pinning)
 
 **Date:** 2026-07-07
-**Status:** Implemented; suite 30/30; awaiting on-device confirmation
+**Status:** Complete — merged to main (PR #3); awaiting on-device confirmation
 (the log's "Interpreter:" line + preflight's `busybox` row)
 
 ## Files Created

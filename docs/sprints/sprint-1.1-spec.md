@@ -1,6 +1,6 @@
 # Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Implemented — pending user approval
+**Status:** Complete — merged to main (PR #3, 2026-07-07)
 **Date:** 2026-03-16 (QA'd and corrected 2026-07-06)
 **Dependencies:** Sprint 0.3 (enrollment), Sprint 0.2 (PAL, path mapper)
 

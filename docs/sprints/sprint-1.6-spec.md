@@ -1,6 +1,6 @@
 # Sprint 1.6 — OTA Updates
 
-**Status:** Implemented — pending user approval
+**Status:** Complete — merged to main (PR #3, 2026-07-07)
 **Date:** 2026-07-07
 **Dependencies:** Sprint 1.1–1.3 (daemon + enrollment, hardware-validated), working bundled git (post-exec-path fix)
 

@@ -38,9 +38,18 @@ docs/
 tests/
   unit/           — Unit tests by module
   integration/    — Cross-module integration tests
-  fixtures/       — Test data
-scripts/          — Build, test, and automation scripts
-tools/            — Developer utilities (not shipped)
+  fixtures/       — Test data (incl. binary format fixtures)
+scripts/          — Build, test, gate, and release automation
+tools/            — Developer utilities and companion templates
+  rzip/           — RZIP codec (C) + vendored libretro reference oracle
+  saves-repo/     — Templates installed into the USER'S saves repo
+release/
+  channels.json   — OTA release manifest (stable/nightly → pinned commits)
+  README.md       — the channel/publish/rollback contract
+.githooks/        — The pre-push quality gate (core.hooksPath target)
+build/
+  Continuity.pak/ — The COMMITTED shipped artifact (OTA serves it);
+                    everything else under build/ is gitignored
 upstream/         — Upstream references (NextUI source, platform docs)
 ```
 
@@ -65,7 +74,7 @@ upstream/         — Upstream references (NextUI source, platform docs)
                     poll / detect       git push / pull
 ```
 
-1. **Change detection:** Daemon polls save directories for modified `.srm` files (via `find -newer` on constrained devices, `inotifywait` on full Linux)
+1. **Change detection:** Daemon polls save directories for modified saves (`.srm`/`.sav`, plus `.st0`–`.st9` state backups) via `find -newer` on constrained devices, `inotifywait` on full Linux
 2. **Stage and commit:** Changed saves are staged and committed to a local git clone
 3. **Push:** If WiFi is available, push to the user's private GitHub repo
 4. **Pull on boot:** On device startup, pull latest saves from the repo
@@ -73,17 +82,26 @@ upstream/         — Upstream references (NextUI source, platform docs)
 
 ### What We Sync
 
-**SRAM saves only (`.srm` files).** Not save states, not screenshots, not configuration. SRAM saves are:
+**SRAM saves (`.srm` and `.sav`)** — the portable unit and the product
+contract ("never lose a save"). SRAM is:
 - Tiny (8 KB – 128 KB each)
 - Portable across emulator cores (same SRAM format regardless of core)
 - The user's actual progress (not a snapshot of emulator memory)
+
+**Save states (`.st0`–`.st9`)** are additionally ARCHIVED (one-way
+device → repo, size-capped) as versioned backups — owner override of
+the original out-of-scope decision. Restore/cross-device state sync is
+designed but not shipped: `docs/design/save-state-sync.md` (same-core,
+S1–S3) and `docs/design/state-transmutation.md` (cross-emulator R&D,
+perpetually experimental).
 
 ### What We Don't Do
 
 - No OAuth to cloud providers (OneDrive, Google Drive, Dropbox)
 - No token storage or management for third-party services
 - No server-side infrastructure we operate (the user's GitHub repo is the "server")
-- No save state sync (too large, core-specific, not portable)
+- No cross-CORE save-state conversion promises — state work is gated
+  behind the designs above and never weakens the SRAM contract
 
 ### Security Model
 
@@ -92,6 +110,8 @@ upstream/         — Upstream references (NextUI source, platform docs)
 - **Token on device** is a GitHub PAT with minimal scope (one repo, contents read/write)
 - **Worst case if device is stolen:** Attacker can read/write save files in one private repo. That's it.
 - **Revocation:** User uninstalls the GitHub App or deletes the PAT. Instant.
+- Full threat model, PAT byte inventory, and review checklist:
+  `docs/design/security-model.md` (changes there are Fable-class).
 
 ### System Taxonomy
 
@@ -214,7 +234,7 @@ Each platform client in `src/platforms/<name>/` can use platform-native construc
 Format: `<type>(<scope>): <short description>`
 
 Types: `feat`, `fix`, `test`, `docs`, `refactor`, `build`, `chore`
-Scopes: `core`, `nextui`, `onion`, `retrodeck`, `android`, `enrollment`, `config`, `tests`, `scripts`, `docs`
+Scopes: `core`, `nextui`, `onion`, `retrodeck`, `android`, `enrollment`, `config`, `tests`, `scripts`, `docs`, `tools`, `release`
 
 ### Testing Requirements
 
@@ -224,6 +244,21 @@ Scopes: `core`, `nextui`, `onion`, `retrodeck`, `android`, `enrollment`, `config
 - Fixtures: `tests/fixtures/`
 - Tests must run under `busybox ash` for core and constrained-platform code.
 - Tests must be self-contained — create temp dirs, clean up after.
+- **Tests must pass UNPRIVILEGED** (the full gate reruns the suite as
+  `nobody`, for whom the repo is read-only). Concretely: never write
+  into the repo tree; put every artifact under `$TMPDIR`; never use a
+  FIXED shared path like `/tmp/name` (a root-owned leftover blocks
+  other users, and concurrent runs collide) — derive per-process names
+  and respect `$TMPDIR`. Both rules exist because the gate caught real
+  violations of each.
+- Root-conditional test branches (`id -u` checks) are a red flag: the
+  branch that only runs unprivileged has, historically, never run at
+  all — make sure the gate's nobody-pass actually exercises it.
+- **Format/protocol code is validated against vendored upstream source,
+  not documentation or memory** — compile the other side's real code
+  into an interop oracle (precedents: `tools/rzip/reference/`, the
+  busybox matrix). Byte-level claims about user data get tested against
+  the user's actual files before being asserted.
 
 ## NextUI Build, Validation & Delivery Protocol
 
@@ -317,6 +352,8 @@ Read the sprint `.md` for the sprint you're working on. Confirm it's approved.
 
 ### Step 5 — Read referenced design docs (sprint-specific only)
 Read only docs listed in the sprint's "Reference Specs" section.
+Exception that is ALWAYS in scope for NextUI platform work:
+`docs/platform/nextui-field-notes.md` (hardware-validated traps).
 
 ### Step 6 — Read the sprint summary (if resuming)
 If a summary exists, read it to avoid duplicate work.
