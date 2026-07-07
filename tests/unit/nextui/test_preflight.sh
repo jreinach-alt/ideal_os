@@ -226,6 +226,17 @@ assert_eq "kill switch stays green" "0" "$rc"
 assert_contains "kill switch reported" "$R11d" "disabled (CONTINUITY_VENDOR_SH=0)"
 rm -rf "$PAK/bin"
 
+# --- Test 12: credentials embedded in repo_url are warned and masked ---
+printf '{\n  "repo_url": "https://x:leaky-token@github.com/u/r",\n  "pat": "sekrit999",\n  "device_name": "brick"\n}\n' \
+    > "$SDROOT/setup.json"
+R12="$TEST_TMPDIR/r12.txt"
+rc=0; pf_run "$R12" || rc=$?
+assert_contains "embedded-credential URL warns" "$R12" \
+    "repo_url embeds credentials"
+assert_not_contains "embedded token never in report" "$R12" "leaky-token"
+printf '{\n  "repo_url": "https://github.com/u/r",\n  "pat": "sekrit999",\n  "device_name": "brick"\n}\n' \
+    > "$SDROOT/setup.json"
+
 # --- Report ---
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

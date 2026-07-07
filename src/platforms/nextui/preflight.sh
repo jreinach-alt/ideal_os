@@ -231,7 +231,14 @@ pf_check_setup_json() {
     name=$(sed -n 's/^[[:space:]]*"device_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f")
     pat=$(sed -n 's/^[[:space:]]*"pat"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f")
     if [ -n "$url" ] && [ -n "$name" ] && [ -n "$pat" ]; then
-        pf_emit "ok" "setup-json" "repo=$url device=$name pat=present(${#pat} chars)"
+        # Credentials embedded in the URL end up in git's error output
+        # and our logs — the pat field is the only sanctioned channel.
+        case "$url" in
+            *://*@*)
+                pf_emit "warn" "setup-json" "repo_url embeds credentials — remove them; the pat field is used for auth"
+                ;;
+        esac
+        pf_emit "ok" "setup-json" "repo=$(printf '%s' "$url" | sed 's|://[^/@]*@|://|') device=$name pat=present(${#pat} chars)"
     else
         pf_emit "FAIL" "setup-json" "unparseable — need repo_url, device_name, pat (url:'${url:-?}' device:'${name:-?}' pat:$([ -n "$pat" ] && printf 'present' || printf 'MISSING'))"
     fi

@@ -155,7 +155,12 @@ enroll_run() {
     export GIT_ASKPASS
 
     # Step 3: Clone
-    pal_log "info" "Cloning repo: $repo_url"
+    # Log the URL with any embedded userinfo stripped — a user who
+    # pastes https://x:TOKEN@host/... must not have the token land in
+    # enroll.log (the PAT belongs in the pat field, never the URL).
+    local log_url
+    log_url=$(printf '%s' "$repo_url" | sed 's|://[^/@]*@|://|')
+    pal_log "info" "Cloning repo: $log_url"
     if ! se_clone "$repo_url" "$CONTINUITY_REPO_DIR"; then
         pal_log "error" "Clone failed"
         unset GIT_ASKPASS
