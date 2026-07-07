@@ -153,6 +153,11 @@ ln -s "$PROJECT_ROOT/src/core/runtime_poll.sh" "$FAKE_PAK/scripts/core/runtime_p
 
 # ═══ Sprint 1.1 — Enrollment check (AC 12-26) ═══════════════════════
 
+# cd_check_enrollment probes the network before enrolling; default to
+# online with zero wait so these tests are deterministic and fast.
+pal_is_online() { return 0; }
+CONTINUITY_NET_WAIT_SLEEP=0
+
 # AC 12-13: already enrolled — esd_import not called
 enroll_is_enrolled() { return 0; }
 esd_detect_setup_file() { return 0; }
@@ -189,6 +194,41 @@ if grep -qi "failed" "$LOG_CAPTURE"; then
 else
     assert_eq "AC25: enrollment failure logged" "logged" "not-logged"
 fi
+
+# Boot WiFi race: enrollment waits (bounded) for the network to come up
+NET_COUNTER="$TEST_TMPDIR/net_calls"
+printf '0' > "$NET_COUNTER"
+pal_is_online() {
+    local n
+    n=$(cat "$NET_COUNTER")
+    n=$((n + 1))
+    printf '%s' "$n" > "$NET_COUNTER"
+    [ "$n" -ge 3 ]    # offline for the first 2 probes, then online
+}
+esd_import() { touch "$TEST_TMPDIR/net_import_called"; return 0; }
+CONTINUITY_NET_WAIT_TICKS=5
+CONTINUITY_NET_WAIT_SLEEP=0
+rc=0; cd_check_enrollment || rc=$?
+assert_rc "net-wait: enrollment succeeds once network appears" 0 "$rc"
+assert_file_exists "net-wait: esd_import ran after wait" "$TEST_TMPDIR/net_import_called"
+
+# Network never appears within the window → fail, retry next boot
+pal_is_online() { return 1; }
+rm -f "$TEST_TMPDIR/net_import_called"
+: > "$LOG_CAPTURE"
+CONTINUITY_NET_WAIT_TICKS=2
+rc=0; cd_check_enrollment || rc=$?
+assert_rc "net-wait: offline forever returns 1" 1 "$rc"
+assert_file_not_exists "net-wait: esd_import never attempted offline" \
+    "$TEST_TMPDIR/net_import_called"
+if grep -q "network never came up" "$LOG_CAPTURE"; then
+    assert_eq "net-wait: offline outcome logged" "logged" "logged"
+else
+    assert_eq "net-wait: offline outcome logged" "logged" "not-logged"
+fi
+pal_is_online() { return 0; }
+CONTINUITY_NET_WAIT_TICKS=""
+CONTINUITY_NET_WAIT_SLEEP=""
 
 # ═══ Sprint 1.2 — Boot dispatch (AC 1-11) ═══════════════════════════
 

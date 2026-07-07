@@ -4,17 +4,19 @@
 # PAL implementation for NextUI (TrimUI Brick)
 # BusyBox ash compatible. FAT32 filesystem. No system git.
 
-CONTINUITY_SAVES_ROOT="/mnt/SDCARD/Saves"
-CONTINUITY_REPO_DIR="/mnt/SDCARD/.continuity/repo"
+# All paths are env-defaulted: unset on the device (so the SD card paths
+# apply), overridden by tests to run against sandbox directories.
+CONTINUITY_SAVES_ROOT="${CONTINUITY_SAVES_ROOT:-/mnt/SDCARD/Saves}"
+CONTINUITY_REPO_DIR="${CONTINUITY_REPO_DIR:-/mnt/SDCARD/.continuity/repo}"
 CONTINUITY_PLATFORM="nextui"
-CONTINUITY_SD_ROOT="/mnt/SDCARD"
+CONTINUITY_SD_ROOT="${CONTINUITY_SD_ROOT:-/mnt/SDCARD}"
 # CONTINUITY_DEVICE_NAME is read from enrollment config by pal_init
 
 # The PAK's on-card location varies by platform dir (Tools/tg5040/... on the
 # Brick). The daemon exports CONTINUITY_PAK_DIR from its own script path;
 # fall back to the Brick default when sourced outside the daemon.
 CONTINUITY_PAK_DIR="${CONTINUITY_PAK_DIR:-/mnt/SDCARD/Tools/tg5040/Continuity.pak}"
-CONTINUITY_GIT_BIN="$CONTINUITY_PAK_DIR/bin/git"
+CONTINUITY_GIT_BIN="${CONTINUITY_GIT_BIN:-$CONTINUITY_PAK_DIR/bin/git}"
 
 # pal_init — read device name from enrollment config and verify git binary
 # Returns 0 on success, 1 if enrollment incomplete or git binary missing.

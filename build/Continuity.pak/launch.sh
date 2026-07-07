@@ -1,15 +1,20 @@
 #!/bin/sh
 # Continuity Tool PAK — launch.sh
 #
-# Entry point for the Continuity tool. On first launch, installs the sync
-# daemon into $USERDATA_PATH/auto.sh; on subsequent launches, shows the
-# daemon's last status line.
+# State-driven entry point for the Continuity tool:
+#   - always: ensure the daemon boot hook is installed in auto.sh
+#   - not enrolled + setup.json present: run supervised enrollment
+#     (B cancels, X/Y replays the log on screen)
+#   - not enrolled, no setup.json: tell the user what to stage
+#   - enrolled: honest status — is the daemon actually running, last
+#     sync line if any, last error if it died
 #
 # Set CONTINUITY_DEBUG=1 in the calling environment to capture an xtrace
 # log to ./launch_debug.log inside the PAK directory.
 #
-# CONTINUITY_HOME and CONTINUITY_SD_ROOT are overridable for off-device
-# testing; on the device they default to the SD card paths.
+# CONTINUITY_HOME, CONTINUITY_SD_ROOT, and CONTINUITY_PID_FILE are
+# overridable for off-device testing; on the device they default to the
+# SD card / tmpfs paths.
 
 cd "$(dirname "$0")" || exit 1
 
@@ -26,7 +31,7 @@ LOGO="/mnt/SDCARD/.system/res/logo.png"
 SD_ROOT="${CONTINUITY_SD_ROOT:-/mnt/SDCARD}"
 CONTINUITY_HOME="${CONTINUITY_HOME:-/mnt/SDCARD/.continuity}"
 HOOK_MARKER="$CONTINUITY_HOME/.hook_installed"
-FIFO="/tmp/show2.fifo"
+FIFO="${CONTINUITY_SHOW2_FIFO:-/tmp/show2.fifo}"
 SHOW_PID=""
 
 # ── show2.elf helpers ───────────────────────────────────────────────
@@ -50,69 +55,76 @@ show_daemon_start() {
 }
 
 # show_daemon_text — push a new text line into the running daemon.
+# Append is identical to a plain write on a real FIFO, and preserves the
+# full message sequence when tests capture to a regular file.
 show_daemon_text() {
-    [ -p "$FIFO" ] && printf 'TEXT:%s\n' "$1" > "$FIFO"
+    [ -p "$FIFO" ] || [ -f "$FIFO" ] || return 0
+    printf 'TEXT:%s\n' "$1" >> "$FIFO"
 }
 
 # show_daemon_stop — gracefully tear down the daemon and wait for exit.
 show_daemon_stop() {
     [ -n "$SHOW_PID" ] || return 0
-    [ -p "$FIFO" ] && printf 'QUIT\n' > "$FIFO"
+    if [ -p "$FIFO" ] || [ -f "$FIFO" ]; then
+        printf 'QUIT\n' >> "$FIFO"
+    fi
     wait "$SHOW_PID" 2>/dev/null
     SHOW_PID=""
 }
 
-# ── First run: install daemon hook ──────────────────────────────────
+# ── Module loading (needed for enrollment state + actions) ──────────
 
-if [ ! -f "$HOOK_MARKER" ]; then
-    mkdir -p "$CONTINUITY_HOME"
+CONTINUITY_PAK_DIR="$(pwd)"
+export CONTINUITY_PAK_DIR
 
-    USERDATA_PATH="${USERDATA_PATH:-/mnt/SDCARD/.userdata/tg5040}"
-    AUTO_SH="$USERDATA_PATH/auto.sh"
-
-    # Idempotently append the daemon launch into the global auto.sh hook.
-    # The daemon is fully detached from the boot shell's stdio: it manages
-    # its own log file, and a daemon holding the boot console open is the
-    # kind of thing that hangs a boot sequence.
-    if ! grep -qF "continuity_daemon.sh" "$AUTO_SH" 2>/dev/null; then
-        mkdir -p "$USERDATA_PATH"
-        pak_abs="$(pwd)"
-        hook_line="\"$pak_abs/scripts/continuity_daemon.sh\" </dev/null >/dev/null 2>&1 &"
-        if [ -f "$AUTO_SH" ]; then
-            printf '\n# Continuity save sync daemon\n%s\n' "$hook_line" >> "$AUTO_SH"
-        else
-            printf '#!/bin/sh\n# Continuity save sync daemon\n%s\n' "$hook_line" > "$AUTO_SH"
-            chmod +x "$AUTO_SH"
-        fi
+for f in scripts/pal_nextui.sh scripts/core/pal.sh scripts/core/enrollment.sh; do
+    if [ ! -f "./$f" ]; then
+        show_simple "Continuity install corrupt: missing $f" 5
+        exit 1
     fi
+done
+. ./scripts/pal_nextui.sh
+. ./scripts/core/pal.sh
+. ./scripts/core/enrollment.sh
 
+# ── Boot hook install (idempotent, every launch) ────────────────────
+# The daemon is fully detached from the boot shell's stdio: it manages
+# its own log file, and a daemon holding the boot console open is the
+# kind of thing that hangs a boot sequence.
+
+USERDATA_PATH="${USERDATA_PATH:-/mnt/SDCARD/.userdata/tg5040}"
+AUTO_SH="$USERDATA_PATH/auto.sh"
+
+if ! grep -qF "continuity_daemon.sh" "$AUTO_SH" 2>/dev/null; then
+    mkdir -p "$USERDATA_PATH" "$CONTINUITY_HOME"
+    hook_line="\"$CONTINUITY_PAK_DIR/scripts/continuity_daemon.sh\" </dev/null >/dev/null 2>&1 &"
+    if [ -f "$AUTO_SH" ]; then
+        printf '\n# Continuity save sync daemon\n%s\n' "$hook_line" >> "$AUTO_SH"
+    else
+        printf '#!/bin/sh\n# Continuity save sync daemon\n%s\n' "$hook_line" > "$AUTO_SH"
+        chmod +x "$AUTO_SH"
+    fi
     touch "$HOOK_MARKER"
+fi
 
-    # If a setup.json is staged on the SD card, run enrollment now so the
-    # user sees the result immediately rather than after a reboot.
+# ── Not enrolled: enroll now (if possible) ──────────────────────────
+
+if ! enroll_is_enrolled; then
     if [ -f "$SD_ROOT/setup.json" ]; then
-        # Verify all sourced modules are present before touching any of them.
-        for f in scripts/pal_nextui.sh scripts/core/pal.sh \
-                 scripts/core/path_mapper.sh scripts/core/sync_engine.sh \
-                 scripts/core/enrollment.sh scripts/enroll_sd_card.sh \
-                 scripts/enroll_ui.sh; do
+        # Full module set for enrollment, presence-checked first.
+        for f in scripts/core/path_mapper.sh scripts/core/sync_engine.sh \
+                 scripts/enroll_sd_card.sh scripts/enroll_ui.sh; do
             if [ ! -f "./$f" ]; then
                 show_simple "Continuity install corrupt: missing $f" 5
                 exit 1
             fi
         done
-
-        show_daemon_start "Enrolling device...  (B cancels, X/Y shows log)"
-
-        CONTINUITY_PAK_DIR="$(pwd)"
-        export CONTINUITY_PAK_DIR
-        . ./scripts/pal_nextui.sh
-        . ./scripts/core/pal.sh
         . ./scripts/core/path_mapper.sh
         . ./scripts/core/sync_engine.sh
-        . ./scripts/core/enrollment.sh
         . ./scripts/enroll_sd_card.sh
         . ./scripts/enroll_ui.sh
+
+        show_daemon_start "Enrolling device...  (B cancels, X/Y shows log)"
 
         # Supervised enrollment: live log line on screen, B cancels,
         # X/Y replays the log, watchdog kills a stuck run. Everything is
@@ -134,20 +146,34 @@ if [ ! -f "$HOOK_MARKER" ]; then
         sleep 3
         show_daemon_stop
     else
-        show_simple "Installed! Reboot to start daemon." 3
+        show_simple "Not enrolled. Put setup.json on the SD card root, then relaunch." 4
     fi
 
     exit 0
 fi
 
-# ── Subsequent runs: show daemon status ─────────────────────────────
+# ── Enrolled: honest daemon status ──────────────────────────────────
 
+PID_FILE="${CONTINUITY_PID_FILE:-/tmp/continuity.pid}"
 LOG_FILE="$CONTINUITY_HOME/continuity.log"
 
-if [ -f "$LOG_FILE" ]; then
-    last_status=$(grep -E "(Sync complete|Push complete|Pull complete|Enrollment complete)" \
-                       "$LOG_FILE" 2>/dev/null | tail -1)
-    show_simple "${last_status:-Continuity is running.}" 3
+daemon_alive=""
+if [ -f "$PID_FILE" ]; then
+    pid=$(cat "$PID_FILE" 2>/dev/null)
+    case "$pid" in
+        ''|*[!0-9]*) ;;
+        *) kill -0 "$pid" 2>/dev/null && daemon_alive="yes" ;;
+    esac
+fi
+
+if [ -n "$daemon_alive" ]; then
+    last_sync=$(grep -E "(Sync complete|Push complete|Pull complete|Enrollment complete)" \
+                     "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/^\[[^]]*\] //' | cut -c1-64)
+    show_simple "${last_sync:-Daemon running — no syncs yet.}" 3
 else
-    show_simple "Daemon not started yet. Reboot device." 3
+    show_simple "Daemon NOT running. Reboot to start it." 3
+    last_err=$(grep -i "error" "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/^\[[^]]*\] //' | cut -c1-64)
+    if [ -n "$last_err" ]; then
+        show_simple "Last error: $last_err" 4
+    fi
 fi

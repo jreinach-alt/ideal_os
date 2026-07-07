@@ -114,6 +114,21 @@ cd_check_enrollment() {
         return 1
     fi
 
+    # At boot, WiFi comes up in the background seconds before auto.sh runs
+    # us — give the network a bounded window before attempting the clone.
+    # CONTINUITY_NET_WAIT_TICKS/SLEEP are test hooks (defaults: 12 × 5s).
+    local net_ticks
+    net_ticks="${CONTINUITY_NET_WAIT_TICKS:-12}"
+    while ! pal_is_online && [ "$net_ticks" -gt 0 ]; do
+        pal_log "info" "Waiting for network before enrollment ($net_ticks tries left)"
+        sleep "${CONTINUITY_NET_WAIT_SLEEP:-5}"
+        net_ticks=$((net_ticks - 1))
+    done
+    if ! pal_is_online; then
+        pal_log "error" "Not enrolled and network never came up — will retry next boot"
+        return 1
+    fi
+
     # Run enrollment
     pal_log "info" "setup.json found, running enrollment"
     if ! esd_import; then

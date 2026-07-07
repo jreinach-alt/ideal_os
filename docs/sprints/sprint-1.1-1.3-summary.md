@@ -107,6 +107,38 @@ Changes:
   cancel, watchdog, log replay, live mirroring with timestamp stripping,
   64-char display truncation, and failure-code normalization.
 
+## Addendum 2 (2026-07-06, later still): second on-device round
+
+Reported behavior: after the enrollment hang and a hard power-off, the
+next boot auto-started the daemon (boot hook confirmed working on
+hardware), but tapping the pak showed "Continuity is running." and
+exited. Three defects behind that:
+
+1. **Stale partial clone poisons enrollment** — the hard power-off left
+   `.continuity/repo` partially cloned; `git clone` refuses a non-empty
+   target, so every subsequent enrollment attempt failed instantly.
+   Fixed: `esd_import` removes a repo dir that exists without a
+   completed enrollment before cloning (pre-enrollment the local clone
+   is disposable; the remote is the source of truth).
+2. **Boot enrollment races WiFi** — MinUI backgrounds `wifi_init.sh`
+   seconds before `auto.sh` runs the daemon, so boot-time enrollment ran
+   before the network was up and exited. Fixed: `cd_check_enrollment`
+   waits (bounded, default 12×5s, test-overridable) for `pal_is_online`
+   before attempting enrollment.
+3. **Misleading status text** — launch.sh showed "Continuity is
+   running." whenever the log existed with no success line, even though
+   the daemon had exited at boot. Fixed: launch.sh is now state-driven:
+   not-enrolled + setup.json → supervised enrollment on the spot (WiFi
+   is up by menu time, making the pak tap the natural retry path);
+   not-enrolled without setup.json → staging guidance; enrolled → PID
+   liveness check with "Daemon running/NOT running", last sync line, and
+   last error line when dead.
+
+Also: NextUI PAL path variables are env-defaulted for sandbox testing,
+and `test_launch_sh.sh` now exercises a full real enrollment through
+launch.sh (bare git remote, stale-clone precondition, supervisor UI).
+Suite: 28 files green.
+
 ## Open Items
 
 1. **On-device validation checklist not yet run** (specs 1.1 D1–D6, 1.2

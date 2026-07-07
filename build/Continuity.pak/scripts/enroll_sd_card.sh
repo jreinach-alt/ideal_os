@@ -75,6 +75,16 @@ esd_import() {
         return 0
     fi
 
+    # Step 3b: Clear a stale partial clone. A crash or power-off mid-clone
+    # leaves a repo dir without a device_name; git clone refuses to reuse
+    # a non-empty target, which would poison every retry. Pre-enrollment,
+    # the local clone holds nothing of value — the remote is the source
+    # of truth — so removal is safe.
+    if [ -n "$CONTINUITY_REPO_DIR" ] && [ -d "$CONTINUITY_REPO_DIR" ]; then
+        pal_log "warn" "Removing stale partial clone at $CONTINUITY_REPO_DIR"
+        rm -rf "$CONTINUITY_REPO_DIR"
+    fi
+
     # Step 4: Run enrollment
     if ! enroll_run "$_ESD_REPO_URL" "$_ESD_DEVICE_NAME" "$_ESD_PAT"; then
         pal_log "error" "SD card enrollment failed"
