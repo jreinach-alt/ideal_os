@@ -241,6 +241,41 @@ just the current run's copy flag) so files stranded by earlier runs get
 committed. ANY new git-output parsing MUST use -z or quotepath-immune
 plumbing and be tested with `Name (USA).ext` and apostrophe filenames.
 
+## Two-device concurrency (harness-proven, 2026-07-07)
+
+`tests/integration/test_two_device_conflict.sh` drives two fully
+enrolled simulated devices against one remote through every sync phase
+— no timing, deterministic. It exists because the "never silently
+overwrite" promise had only ever been unit-tested in isolation, and on
+first run it caught three defects that would have shipped into Phase 2:
+
+- **`.sav` conflicts were not preserved**: the conflict handler's
+  pathspec was `'*.srm'` only — a two-device conflict on the Brick's
+  DEFAULT format hit "no conflicts, reset to remote", and the stale
+  catch-up then re-canonicalized the local bytes: last-writer-wins
+  with the loser buried in git history, no `.local`, no `.conflict`.
+- **One-sided adds crashed recovery**: `diff HEAD origin/main` lists
+  remote-only files too; preserving one cp'd a file that doesn't exist
+  locally → conflict handler returned 1 → every subsequent boot failed
+  recovery the same way — a PERMANENT wedge. And this path is the
+  everyday one: enrollment itself pushes a device-registration commit,
+  so "device B joined while device A had queued commits" triggers it.
+  Conflicts are now classified: preserve only files existing on BOTH
+  sides with different bytes; one-sided adds flow through reset (remote
+  add) or device re-sync (local add).
+- **The porcelain-quoting trap, third sighting**: `diff --name-only`
+  C-quotes spaced paths in BOTH the conflict handler and
+  `bp_get_remote_changes` (which also filtered `.srm$` only — inbound
+  `.sav` changes never applied to devices). Both now use `-z`.
+
+Design behaviors the harness DOCUMENTS as correct: any device's
+enrollment/conflict commit advances the remote, so other devices'
+runtime pushes rc-1 until their next boot pull — self-healing, and
+poll commits stay queued locally meanwhile. After conflict
+preservation, boot-pull deliberately overwrites the device slot with
+canonical (the divergent bytes live in `.local`; the conflict UI's
+try/resolve flow is how they come back).
+
 ## Save states — REVISED decision (owner override, 2026-07-07)
 
 The owner wants states backed up even while non-portable. Shipped as

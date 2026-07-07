@@ -15,20 +15,29 @@
 #
 # Public functions: bp_run, bp_get_remote_changes, bp_apply_remote_saves
 
-# bp_get_remote_changes — list .srm files changed between old_commit and HEAD
+# bp_get_remote_changes — list save files changed between old_commit and HEAD
 # Usage: bp_get_remote_changes <repo_dir> <old_commit>
-# Prints repo-relative .srm paths, one per line.
+# Prints repo-relative save paths (.srm and .sav), one per line.
 # Returns: 0 on success, 1 if git diff fails.
 bp_get_remote_changes() {
-    local repo_dir old_commit diff_output
+    local repo_dir old_commit _bp_tmp rc_diff
     repo_dir="$1"
     old_commit="$2"
 
-    diff_output=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" diff --name-only "$old_commit"..HEAD 2>&1) || return 1
-
-    if [ -n "$diff_output" ]; then
-        printf '%s\n' "$diff_output" | grep '\.srm$' || true
+    # -z: diff --name-only C-quotes spaced/non-ASCII paths (the
+    # porcelain-quoting trap); NUL output is never quoted. Temp file
+    # keeps git's exit code observable without pipefail.
+    _bp_tmp=$(mktemp)
+    rc_diff=0
+    "$CONTINUITY_GIT_BIN" -C "$repo_dir" diff --name-only -z "$old_commit"..HEAD \
+        >"$_bp_tmp" 2>/dev/null || rc_diff=$?
+    if [ "$rc_diff" -ne 0 ]; then
+        rm -f "$_bp_tmp"
+        return 1
     fi
+
+    tr '\0' '\n' < "$_bp_tmp" | grep '\.\(srm\|sav\)$' || true
+    rm -f "$_bp_tmp"
     return 0
 }
 

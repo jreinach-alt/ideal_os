@@ -90,15 +90,39 @@ ch_handle_pull_conflict() {
         return 1
     fi
 
-    # Step 2: Identify conflicted .srm files
-    local conflicted
-    conflicted=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" \
-        diff --name-only HEAD origin/main -- '*.srm' 2>/dev/null) || true
+    # Step 2: Identify diverged save files — BOTH formats the scanners
+    # sync (.srm and .sav; the Brick's compiled default is .sav), and
+    # NUL-delimited (-z) because diff --name-only C-quotes spaced and
+    # non-ASCII paths exactly like status --porcelain does (see the
+    # porcelain-quoting field note).
+    local diverged
+    diverged=$("$CONTINUITY_GIT_BIN" -C "$repo_dir" \
+        diff --name-only -z HEAD origin/main -- '*.srm' '*.sav' 2>/dev/null | \
+        tr '\0' '\n') || true
+
+    # Classify: a CONFLICT is a save that exists on BOTH sides with
+    # different bytes. One-sided adds are not conflicts — a remote-only
+    # add has no local version to lose (the reset below brings it in),
+    # and a local-only add is re-synced from the device by the stale
+    # catch-up scan / next poll after the reset. Preserving them would
+    # crash (remote-only: nothing local to copy) or litter bogus
+    # artifacts (local-only: no remote counterpart).
+    local conflicted _ch_cls_tmp
+    _ch_cls_tmp=$(mktemp)
+    : > "$_ch_cls_tmp"
+    printf '%s\n' "$diverged" | while IFS= read -r repo_path; do
+        [ -z "$repo_path" ] && continue
+        "$CONTINUITY_GIT_BIN" -C "$repo_dir" cat-file -e "HEAD:$repo_path" 2>/dev/null || continue
+        "$CONTINUITY_GIT_BIN" -C "$repo_dir" cat-file -e "origin/main:$repo_path" 2>/dev/null || continue
+        printf '%s\n' "$repo_path" >> "$_ch_cls_tmp"
+    done
+    conflicted=$(cat "$_ch_cls_tmp")
+    rm -f "$_ch_cls_tmp"
 
     if [ -z "$conflicted" ]; then
-        # No .srm conflicts — accept remote
+        # No true save conflicts — accept remote
         "$CONTINUITY_GIT_BIN" -C "$repo_dir" reset --hard origin/main >/dev/null 2>&1
-        pal_log "info" "Conflict handler: no .srm conflicts — reset to remote"
+        pal_log "info" "Conflict handler: no save conflicts — reset to remote"
         return 0
     fi
 
@@ -199,7 +223,9 @@ ch_list_local_files() {
     | while IFS= read -r local_path; do
         local base device
         base=$(printf '%s' "$local_path" | sed 's/\.[^.]*\.local$//')
-        device=$(printf '%s' "$local_path" | sed 's/.*\.srm\.\([^.]*\)\.local$/\1/')
+        # device token is the segment before .local, whatever the
+        # save's own extension is (.srm or .sav)
+        device=$(printf '%s' "$local_path" | sed 's/.*\.\([^.]*\)\.local$/\1/')
         printf '%s %s\n' "$base" "$device"
     done
     return 0
@@ -450,7 +476,7 @@ ch_get_conflict_info() {
     # Derive system and game from path
     local system game
     system=$(printf '%s' "$repo_path" | sed 's|/.*||')
-    game=$(printf '%s' "$repo_path" | sed 's|.*/||; s|\.srm$||')
+    game=$(printf '%s' "$repo_path" | sed 's|.*/||; s|\.srm$||; s|\.sav$||')
 
     # Determine active_version and trying_modified
     local active_version trying_modified
