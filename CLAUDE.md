@@ -265,7 +265,9 @@ NextUI platform work.**
    **Follow-through rule:** a session that pushes does not end its
    turn with that push's CI run unchecked — verify it completed, and
    fix or report a failure yourself; never leave a red run for the
-   owner to discover.
+   owner to discover. Check over GIT transport (connector-independent):
+   `sh scripts/ci_status.sh <sha> --wait` — CI publishes each run's
+   conclusion as a git note (refs/notes/ci) on the tested commit.
 
 ## Model Regimen
 
