@@ -131,20 +131,42 @@ if ! enroll_is_enrolled; then
     if [ -f "$SD_ROOT/setup.json" ]; then
         # Full module set for enrollment, presence- and CRLF-checked first.
         for f in scripts/core/path_mapper.sh scripts/core/sync_engine.sh \
-                 scripts/enroll_sd_card.sh scripts/enroll_ui.sh; do
+                 scripts/enroll_sd_card.sh scripts/enroll_ui.sh \
+                 scripts/preflight.sh; do
             check_module "$f"
         done
         . ./scripts/core/path_mapper.sh
         . ./scripts/core/sync_engine.sh
         . ./scripts/enroll_sd_card.sh
         . ./scripts/enroll_ui.sh
+        . ./scripts/preflight.sh
 
-        show_daemon_start "Enrolling device...  (B cancels, X/Y shows log)"
+        mkdir -p "$CONTINUITY_HOME"
+        ENROLL_LOG="$CONTINUITY_HOME/enroll.log"
+        DIAG_FILE="$SD_ROOT/CONTINUITY_DIAGNOSTIC.txt"
+
+        # Preflight doctor: every environment fact in one pass, written
+        # to a visible report at the SD root, so a failed attempt never
+        # costs more than one card round-trip of information.
+        show_daemon_start "Preflight checks (device, git, network)..."
+        pf_rc=0
+        pf_run "$DIAG_FILE" || pf_rc=$?
+        cat "$DIAG_FILE" >> "$ENROLL_LOG" 2>/dev/null
+
+        if [ "$pf_rc" -ne 0 ]; then
+            show_daemon_text "$(printf '%s' "$_pf_first_fail" | cut -c1-64)"
+            sleep 6
+            show_daemon_text "Full report: SD card/CONTINUITY_DIAGNOSTIC.txt"
+            sleep 4
+            show_daemon_stop
+            exit 0
+        fi
+
+        show_daemon_text "Enrolling device...  (B cancels, X/Y shows log)"
 
         # Supervised enrollment: live log line on screen, B cancels,
         # X/Y replays the log, watchdog kills a stuck run. Everything is
         # logged to .continuity/enroll.log regardless of outcome.
-        ENROLL_LOG="$CONTINUITY_HOME/enroll.log"
         rc=0
         eui_run_enrollment "$ENROLL_LOG" || rc=$?
 

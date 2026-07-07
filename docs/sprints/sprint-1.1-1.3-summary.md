@@ -139,6 +139,44 @@ and `test_launch_sh.sh` now exercises a full real enrollment through
 launch.sh (bare git remote, stale-clone precondition, supervisor UI).
 Suite: 28 files green.
 
+## Addendum 3 (2026-07-07): HTTPS transport + in-container hardware-parity validation
+
+Attempt 4's on-device logs (delivery pipeline now clean) exposed the real
+enrollment blocker: `fatal: unable to find remote helper for 'https'`.
+Git's HTTPS transport is a separate helper program (`git-remote-https`)
+with the build prefix baked in — the PAK only ever shipped `bin/git`.
+
+- `build_git.sh`: switched to reachable canonical mirrors (kernel.org
+  dist tarball for git, curl.se, zlib.net; Ubuntu's pristine openssl
+  3.0.13 LTS orig tarball), fails the build if `git-remote-https` wasn't
+  produced.
+- `build_pak.sh`: ships `libexec/git-core/git-remote-http{,s}` (both
+  names required — transport re-invokes the canonical `http` name; exFAT
+  has no symlinks so both are real copies), a pristine Mozilla CA bundle
+  from curl.se (`share/ca-bundle.crt` — deliberately NOT the build
+  host's system bundle, which contains environment-specific CAs), and an
+  empty `share/templates/` dir.
+- `pal_nextui.sh`: exports `GIT_EXEC_PATH`, `GIT_SSL_CAINFO`,
+  `GIT_TEMPLATE_DIR` at the PAK's own copies (existence-guarded,
+  pre-set env wins so test sandboxes keep the system git). Added
+  `CONTINUITY_FORCE_ONLINE` test/debug hook to `pal_is_online`.
+- **Validation protocol change:** the exact shipped artifact
+  (`build/Continuity.pak/bin/git` + its helpers) now performs a real
+  HTTPS clone from live GitHub under `qemu-aarch64-static` before
+  packaging. Untested cross-compiled binaries no longer ship.
+- **Preflight doctor** (`preflight.sh`, run by launch.sh before
+  enrollment): build stamp, clock sanity (wrong clock breaks TLS),
+  module CRLF scan, git binary + https helper + CA bundle presence, an
+  unauthenticated `git ls-remote` against a public repo (DNS + TCP +
+  TLS + CA + clock in one probe), setup.json shape (PAT masked, only
+  its length reported), joystick device, free space. Full report →
+  `CONTINUITY_DIAGNOSTIC.txt` at the SD root and appended to
+  enroll.log; first fatal check named on screen. One card round-trip
+  now captures the complete environment.
+
+Tests: `test_preflight.sh` (23 assertions), launch.sh preflight-gate
+integration asserts. Suite: 29 files green.
+
 ## Open Items
 
 1. **On-device validation checklist not yet run** (specs 1.1 D1–D6, 1.2

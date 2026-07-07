@@ -22,6 +22,12 @@
 *.so        binary
 *.pakz      binary
 
-# The bundled git binary. Path-anchored so it's unambiguous.
-build/Continuity.pak/bin/git    binary
-build/git.preserved             binary
+# The bundled git binary, its extensionless https helper programs, and
+# the CA bundle (PEM is text, but nothing may ever rewrite its bytes).
+# Path-anchored so they're unambiguous.
+build/Continuity.pak/bin/git                    binary
+build/Continuity.pak/libexec/**                 binary
+build/Continuity.pak/share/ca-bundle.crt        binary
+build/git.preserved                             binary
+build/git-remote-https.preserved                binary
+build/ca-bundle.preserved                       binary

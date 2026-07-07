@@ -91,7 +91,7 @@ update_from_branch() {
     done
 
     # Platform scripts
-    for f in pal_nextui.sh enroll_sd_card.sh enroll_ui.sh continuity_daemon.sh update.sh; do
+    for f in pal_nextui.sh enroll_sd_card.sh enroll_ui.sh preflight.sh continuity_daemon.sh update.sh; do
         if [ -f "$repo_root/src/platforms/nextui/$f" ]; then
             cp "$repo_root/src/platforms/nextui/$f" "$PAK_DIR/scripts/"
         fi

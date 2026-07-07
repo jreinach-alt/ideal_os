@@ -18,6 +18,24 @@ CONTINUITY_SD_ROOT="${CONTINUITY_SD_ROOT:-/mnt/SDCARD}"
 CONTINUITY_PAK_DIR="${CONTINUITY_PAK_DIR:-/mnt/SDCARD/Tools/tg5040/Continuity.pak}"
 CONTINUITY_GIT_BIN="${CONTINUITY_GIT_BIN:-$CONTINUITY_PAK_DIR/bin/git}"
 
+# The cross-compiled git has build-container paths baked in for its
+# helper programs (git-remote-https), templates, and CA bundle. Point
+# all three at the PAK's own copies — guarded on existence, and
+# pre-set environment wins so test sandboxes running the system git
+# keep its real exec path.
+if [ -d "$CONTINUITY_PAK_DIR/libexec/git-core" ]; then
+    GIT_EXEC_PATH="${GIT_EXEC_PATH:-$CONTINUITY_PAK_DIR/libexec/git-core}"
+    export GIT_EXEC_PATH
+fi
+if [ -f "$CONTINUITY_PAK_DIR/share/ca-bundle.crt" ]; then
+    GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$CONTINUITY_PAK_DIR/share/ca-bundle.crt}"
+    export GIT_SSL_CAINFO
+fi
+if [ -d "$CONTINUITY_PAK_DIR/share/templates" ]; then
+    GIT_TEMPLATE_DIR="${GIT_TEMPLATE_DIR:-$CONTINUITY_PAK_DIR/share/templates}"
+    export GIT_TEMPLATE_DIR
+fi
+
 # pal_init — read device name from enrollment config and verify git binary
 # Returns 0 on success, 1 if enrollment incomplete or git binary missing.
 pal_init() {
@@ -40,7 +58,12 @@ pal_init() {
 
 # pal_is_online — check network reachability to GitHub
 # Tries ping first, falls back to wget if ping unavailable.
+# CONTINUITY_FORCE_ONLINE=1 short-circuits to online (test sandboxes and
+# on-device debugging behind ICMP-blocking networks).
 pal_is_online() {
+    if [ -n "$CONTINUITY_FORCE_ONLINE" ]; then
+        return 0
+    fi
     ping -c 1 -W 3 github.com >/dev/null 2>&1 ||
     wget --spider -q -T 3 https://github.com 2>/dev/null
 }

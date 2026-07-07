@@ -70,9 +70,20 @@ cp "$PROJECT_ROOT/src/platforms/nextui/launch.sh" "$PAK/launch.sh"
 cp "$PROJECT_ROOT/src/platforms/nextui/pal_nextui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_sd_card.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_ui.sh" "$PAK/scripts/"
+cp "$PROJECT_ROOT/src/platforms/nextui/preflight.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT"/src/core/*.sh "$PAK/scripts/core/"
 printf '0.1.0-test\n' > "$PAK/version.txt"
 chmod +x "$PAK/launch.sh"
+
+# Satisfy the preflight doctor's artifact checks in the sandbox: fake
+# https helper + CA bundle. The system git does the real work (its own
+# exec path is pre-set below so the PAL's PAK-relative defaults don't
+# hijack it), and the TLS probe points at the local bare remote.
+mkdir -p "$PAK/libexec/git-core" "$PAK/share/templates"
+printf 'stub\n' > "$PAK/libexec/git-core/git-remote-https"
+chmod +x "$PAK/libexec/git-core/git-remote-https"
+printf 'stub-ca\n' > "$PAK/share/ca-bundle.crt"
+SYS_GIT_EXEC_PATH="$(git --exec-path)"
 
 # show2.elf stub: records argv (one call per line); daemon mode just exits
 STUB_BIN="$TEST_TMPDIR/bin"
@@ -101,6 +112,8 @@ run_launch() {
     CONTINUITY_SD_ROOT="$SDROOT" CONTINUITY_HOME="$CHOME" \
     CONTINUITY_REPO_DIR="$REPO_DIR" CONTINUITY_GIT_BIN="git" \
     CONTINUITY_PID_FILE="$PID_FILE" CONTINUITY_SHOW2_FIFO="$FIFO_CAP" \
+    CONTINUITY_FORCE_ONLINE=1 GIT_EXEC_PATH="$SYS_GIT_EXEC_PATH" \
+    PF_LSREMOTE_URL="file://$REMOTE" \
     USERDATA_PATH="$USERDATA" PATH="$STUB_BIN:$PATH" \
     EUI_FIFO="$FIFO_CAP" EUI_JS_DEV="$TEST_TMPDIR/js0" \
     EUI_TICK="0.1" EUI_TIMEOUT_TICKS=100 \
@@ -164,6 +177,11 @@ assert_file_not_exists "stale partial clone was cleared" "$REPO_DIR/partial_junk
 assert_file_not_exists "setup.json consumed after success" "$SDROOT/setup.json"
 assert_file_exists "enrollment log written" "$CHOME/enroll.log"
 assert_contains "success message shown" "$FIFO_CAP" "Enrolled! Reboot to start syncing."
+assert_file_exists "diagnostic report at SD root" "$SDROOT/CONTINUITY_DIAGNOSTIC.txt"
+assert_contains "preflight passed before enrollment" "$SDROOT/CONTINUITY_DIAGNOSTIC.txt" \
+    "=== preflight PASSED ==="
+assert_contains "preflight report copied into enroll.log" "$CHOME/enroll.log" \
+    "=== preflight PASSED ==="
 
 # --- Test 4: enrolled + daemon alive — status shows last sync ---
 

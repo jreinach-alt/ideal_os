@@ -6,36 +6,79 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PAK_DIR="$PROJECT_ROOT/build/Continuity.pak"
-GIT_BIN="$PROJECT_ROOT/build/aarch64/prefix/bin/git"
+PREFIX="$PROJECT_ROOT/build/aarch64/prefix"
+GIT_BIN="$PREFIX/bin/git"
+GIT_HTTPS_HELPER="$PREFIX/libexec/git-core/git-remote-https"
 PLATFORM_DIR="$PROJECT_ROOT/src/platforms/nextui"
 CORE_DIR="$PROJECT_ROOT/src/core"
 CONFIG_DIR="$PROJECT_ROOT/config"
 
-# Fall back to the previously-bundled git binary if a fresh cross-compile
+# Fall back to the previously-bundled binaries if a fresh cross-compile
 # isn't available. Lets us iterate on launch.sh / scripts without rebuilding
-# git from scratch. Stage it outside $PAK_DIR so the rm -rf below can't eat it.
+# git from scratch. Stage them outside $PAK_DIR so the rm -rf below can't
+# eat them.
 if [ ! -f "$GIT_BIN" ] && [ -f "$PAK_DIR/bin/git" ]; then
     GIT_BIN="$PROJECT_ROOT/build/git.preserved"
     cp "$PAK_DIR/bin/git" "$GIT_BIN"
 fi
+if [ ! -f "$GIT_HTTPS_HELPER" ] && [ -f "$PAK_DIR/libexec/git-core/git-remote-https" ]; then
+    GIT_HTTPS_HELPER="$PROJECT_ROOT/build/git-remote-https.preserved"
+    cp "$PAK_DIR/libexec/git-core/git-remote-https" "$GIT_HTTPS_HELPER"
+fi
 
 if [ ! -f "$GIT_BIN" ]; then
     printf 'ERROR: Git binary not found at %s or %s\n' \
-        "$PROJECT_ROOT/build/aarch64/prefix/bin/git" "$PAK_DIR/bin/git" >&2
+        "$PREFIX/bin/git" "$PAK_DIR/bin/git" >&2
     printf 'Run scripts/build_git.sh first.\n' >&2
+    exit 1
+fi
+
+# HTTPS transport is a separate helper program git exec's at runtime.
+# A PAK without it fails enrollment with "unable to find remote helper
+# for 'https'" — the exact on-device failure this guard prevents.
+if [ ! -f "$GIT_HTTPS_HELPER" ]; then
+    printf 'ERROR: git-remote-https not found at %s\n' "$GIT_HTTPS_HELPER" >&2
+    printf 'Run scripts/build_git.sh first (it builds the https helper).\n' >&2
+    exit 1
+fi
+
+# CA bundle for TLS verification: git's baked-in path points at the build
+# container. Ship the pristine Mozilla bundle from curl.se — NOT the build
+# host's system bundle, which may contain environment-specific CAs (e.g.
+# a corporate or CI TLS proxy) that must never be trusted on user devices.
+CA_BUNDLE="$PROJECT_ROOT/build/cacert.pem"
+if [ ! -s "$CA_BUNDLE" ]; then
+    printf 'Fetching Mozilla CA bundle from curl.se...\n'
+    curl -fsSL -o "$CA_BUNDLE" "https://curl.se/ca/cacert.pem" || true
+fi
+if [ ! -s "$CA_BUNDLE" ] && [ -s "$PAK_DIR/share/ca-bundle.crt" ]; then
+    CA_BUNDLE="$PROJECT_ROOT/build/ca-bundle.preserved"
+    cp "$PAK_DIR/share/ca-bundle.crt" "$CA_BUNDLE"
+fi
+if [ ! -s "$CA_BUNDLE" ]; then
+    printf 'ERROR: no CA bundle — curl.se unreachable and no preserved copy.\n' >&2
     exit 1
 fi
 
 # Clean and create PAK structure
 rm -rf "$PAK_DIR"
 mkdir -p "$PAK_DIR/bin"
+mkdir -p "$PAK_DIR/libexec/git-core"
+mkdir -p "$PAK_DIR/share/templates"
 mkdir -p "$PAK_DIR/scripts/core"
 mkdir -p "$PAK_DIR/config/platform_maps"
 
 # ── Copy files ───────────────────────────────────────────────────────
 
-# Git binary
+# Git binary + https helper + CA bundle + empty template dir marker
 cp "$GIT_BIN" "$PAK_DIR/bin/git"
+cp "$GIT_HTTPS_HELPER" "$PAK_DIR/libexec/git-core/git-remote-https"
+# http:// URLs use the same helper under a different name; exFAT has no
+# symlinks, so ship a copy
+cp "$GIT_HTTPS_HELPER" "$PAK_DIR/libexec/git-core/git-remote-http"
+cp "$CA_BUNDLE" "$PAK_DIR/share/ca-bundle.crt"
+printf 'intentionally empty — silences git template warnings\n' \
+    > "$PAK_DIR/share/templates/.keep"
 
 # PAK root: launch.sh (Tool menu entry point)
 cp "$PLATFORM_DIR/launch.sh" "$PAK_DIR/launch.sh"
@@ -45,6 +88,7 @@ cp "$PLATFORM_DIR/continuity_daemon.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/pal_nextui.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/enroll_sd_card.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/enroll_ui.sh" "$PAK_DIR/scripts/"
+cp "$PLATFORM_DIR/preflight.sh" "$PAK_DIR/scripts/"
 cp "$PLATFORM_DIR/update.sh" "$PAK_DIR/scripts/"
 
 # Core modules
@@ -64,7 +108,9 @@ printf '%s\n' "0.1.0-$(date '+%Y%m%d')" > "$PAK_DIR/version.txt"
 # ── Permissions ──────────────────────────────────────────────────────
 
 find "$PAK_DIR" -name "*.sh" -exec chmod +x {} +
-chmod +x "$PAK_DIR/bin/git"
+chmod +x "$PAK_DIR/bin/git" \
+         "$PAK_DIR/libexec/git-core/git-remote-https" \
+         "$PAK_DIR/libexec/git-core/git-remote-http"
 
 # ── Line-ending sanity check ─────────────────────────────────────────
 # CRLF in any shell script makes the kernel exec fail silently on the

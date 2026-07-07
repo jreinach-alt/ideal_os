@@ -23,16 +23,21 @@ RANLIB="${CROSS}-ranlib"
 STRIP="${CROSS}-strip"
 
 # Versions
+# openssl tracks the 3.0 LTS line — its pristine upstream tarball is
+# mirrored by Ubuntu, reachable from restricted build hosts where
+# github.com release downloads and openssl.org are not.
 ZLIB_VERSION="1.3.1"
-OPENSSL_VERSION="3.2.3"
+OPENSSL_VERSION="3.0.13"
 CURL_VERSION="8.11.1"
 GIT_VERSION="2.47.1"
 
-# URLs
-ZLIB_URL="https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz"
-OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
-CURL_URL="https://github.com/curl/curl/releases/download/curl-$(printf '%s' "$CURL_VERSION" | tr '.' '_')/curl-${CURL_VERSION}.tar.gz"
-GIT_URL="https://github.com/git/git/archive/refs/tags/v${GIT_VERSION}.tar.gz"
+# URLs — canonical non-GitHub mirrors: kernel.org ships git's proper
+# dist tarballs (Makefile ready, no autoconf step); curl.se and
+# zlib.net are the projects' own hosts.
+ZLIB_URL="https://www.zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz"
+OPENSSL_URL="http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/openssl_${OPENSSL_VERSION}.orig.tar.gz"
+CURL_URL="https://curl.se/download/curl-${CURL_VERSION}.tar.gz"
+GIT_URL="https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.gz"
 
 NPROC=$(nproc 2>/dev/null || echo 2)
 
@@ -84,12 +89,13 @@ if [ ! -f "$PREFIX/lib/libssl.a" ]; then
     tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
     cd "openssl-${OPENSSL_VERSION}"
 
+    # note: no-docs is a 3.2+ option; 3.0's Configure rejects it and
+    # `make install_sw` skips docs regardless
     ./Configure linux-aarch64 \
         --cross-compile-prefix="${CROSS}-" \
         --prefix="$PREFIX" \
         no-shared \
         no-tests \
-        no-docs \
         no-engine \
         no-dso \
         -static
@@ -206,6 +212,18 @@ make install \
     gitexecdir="$PREFIX/libexec/git-core"
 
 "$STRIP" "$PREFIX/bin/git" 2>/dev/null || true
+"$STRIP" "$PREFIX/libexec/git-core/git-remote-https" 2>/dev/null || true
+"$STRIP" "$PREFIX/libexec/git-core/git-remote-http" 2>/dev/null || true
+
+# HTTPS transport lives in a SEPARATE helper binary that git exec's at
+# runtime. A build without it produces a git that clones file:// but
+# fails https:// with "unable to find remote helper for 'https'" —
+# exactly the on-device enrollment failure this guard prevents.
+if [ ! -x "$PREFIX/libexec/git-core/git-remote-https" ]; then
+    printf 'ERROR: git-remote-https was not built — HTTPS will not work on device.\n' >&2
+    printf 'Check that curl was detected by the git build.\n' >&2
+    exit 1
+fi
 
 # ── Output ───────────────────────────────────────────────────────────
 log "Build complete"
