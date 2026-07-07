@@ -34,7 +34,7 @@ jobs:
         run: shellcheck -x src/core/*.sh src/platforms/nextui/*.sh scripts/*.sh || true
 
       - name: ShellCheck (gate on errors)
-        run: shellcheck -x --severity=error src/core/*.sh src/platforms/nextui/*.sh scripts/*.sh tests/unit/*/*.sh tests/integration/*.sh tests/fixtures/*.sh
+        run: shellcheck -x --severity=error src/core/*.sh src/platforms/nextui/*.sh scripts/*.sh tools/saves-repo/*.sh tests/unit/*/*.sh tests/integration/*.sh tests/fixtures/*.sh
 
       # CRLF in a shipped script silently breaks exec on the device
       # (the kernel reads '#!/bin/sh\r' as the interpreter). The repo
