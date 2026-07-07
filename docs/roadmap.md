@@ -323,6 +323,18 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 **Goal:** Cross-device sync works between TrimUI Brick and Steam Deck. Validates the PAL architecture with a fundamentally different platform.
 
+### Sprint 2.0 — Save-Format Canonicalization (design approved first)
+
+**Scope:**
+- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07 with source-verified NextUI format taxonomy; approve before implementation)
+- Canonical repo format: raw SRAM as `<system>/<rom_basename>.srm`; name-style translation per platform map (`minui`/`retroarch`/`generic`); RZIP detection + quarantine (codec deferred to Phase 3)
+- Materialize saves only where the matching ROM exists (per-device sparse sync)
+- One-time repo migration script with dry-run
+
+**Dependencies:** Phase 1 complete. Must land before Sprint 2.3 (cross-device test needs shared identity).
+
+---
+
 ### Sprint 2.1 — RetroDeck PAL and Enrollment
 
 **Scope:**
