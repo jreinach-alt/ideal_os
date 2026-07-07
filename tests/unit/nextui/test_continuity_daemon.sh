@@ -318,6 +318,36 @@ bp_run() { return 2; }
 rc=0; cd_boot_dispatch "$REPO" || rc=$?
 assert_rc "1.2-AC10: bp_run rc=2 propagates" 2 "$rc"
 
+# ═══ Poll cycle — deferred cold start retry (field defect) ══════════
+
+CONTINUITY_REPO_DIR="$REPO"
+pal_is_online() { return 0; }
+cs_run() { touch "$TEST_TMPDIR/poll_cs_run"; }
+rp_run() { touch "$TEST_TMPDIR/poll_rp_run"; }
+se_has_unpushed_commits() { return 1; }
+se_push() { :; }
+
+# No sentinel + online → cold start retried, runtime poll NOT run
+rm -f "$REPO/.continuity/sentinel" "$TEST_TMPDIR/poll_cs_run" "$TEST_TMPDIR/poll_rp_run"
+cd_poll_once
+assert_file_exists "poll retries deferred cold start when online" "$TEST_TMPDIR/poll_cs_run"
+assert_file_not_exists "runtime poll skipped until sentinel exists" "$TEST_TMPDIR/poll_rp_run"
+
+# No sentinel + offline → neither runs (no error spam into cs)
+pal_is_online() { return 1; }
+rm -f "$TEST_TMPDIR/poll_cs_run" "$TEST_TMPDIR/poll_rp_run"
+cd_poll_once
+assert_file_not_exists "no cold start retry while offline" "$TEST_TMPDIR/poll_cs_run"
+assert_file_not_exists "no runtime poll while cold start pending" "$TEST_TMPDIR/poll_rp_run"
+
+# Sentinel present → normal runtime poll
+pal_is_online() { return 0; }
+touch "$REPO/.continuity/sentinel"
+rm -f "$TEST_TMPDIR/poll_cs_run" "$TEST_TMPDIR/poll_rp_run"
+cd_poll_once
+assert_file_exists "runtime poll runs with sentinel" "$TEST_TMPDIR/poll_rp_run"
+assert_file_not_exists "no cold start once sentinel exists" "$TEST_TMPDIR/poll_cs_run"
+
 # ═══ Sprint 1.3 — Shutdown marker logic ═════════════════════════════
 
 CONTINUITY_REPO_DIR="$REPO"

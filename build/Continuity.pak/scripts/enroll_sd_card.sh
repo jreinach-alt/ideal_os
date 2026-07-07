@@ -44,7 +44,59 @@ esd_parse_setup_file() {
 
 # esd_import — full SD card enrollment import
 # Returns: 0 success (or no-op), 1 failure
+# esd_lock_acquire / esd_lock_release — serialize enrollment.
+# The boot daemon and the Tool PAK's interactive enrollment can run
+# CONCURRENTLY (field-found: the daemon saw device_name mid-enrollment
+# and raced into cold start against a half-pushed remote). mkdir is the
+# atomic primitive; a started_at epoch inside detects stale locks from
+# crashed enrollments.
+# Test hooks: ESD_LOCK_WAIT_TICKS (default 60 × 2s), ESD_LOCK_STALE_SECONDS.
+esd_lock_acquire() {
+    local lock ticks started now
+    lock="$CONTINUITY_SD_ROOT/.continuity/.enroll_lock"
+    ticks="${ESD_LOCK_WAIT_TICKS:-60}"
+    mkdir -p "$CONTINUITY_SD_ROOT/.continuity"
+
+    while ! mkdir "$lock" 2>/dev/null; do
+        started=$(cat "$lock/started_at" 2>/dev/null)
+        now=$(date +%s)
+        if [ -n "$started" ] && \
+           [ $((now - started)) -gt "${ESD_LOCK_STALE_SECONDS:-600}" ]; then
+            pal_log "warn" "Stealing stale enrollment lock (held ${started})"
+            rm -rf "$lock"
+            continue
+        fi
+        ticks=$((ticks - 1))
+        if [ "$ticks" -le 0 ]; then
+            pal_log "error" "Enrollment lock held by another process — giving up"
+            return 1
+        fi
+        sleep 2
+    done
+    date +%s > "$lock/started_at"
+    return 0
+}
+
+esd_lock_release() {
+    rm -rf "$CONTINUITY_SD_ROOT/.continuity/.enroll_lock"
+    return 0
+}
+
+# esd_import — serialize against a concurrent enrollment from the other
+# entry point (boot daemon vs Tool PAK tap), then run the real import.
+# Wrapper guarantees the lock is released on every return path.
 esd_import() {
+    local rc
+    if ! esd_lock_acquire; then
+        return 1
+    fi
+    rc=0
+    _esd_import_locked || rc=$?
+    esd_lock_release
+    return "$rc"
+}
+
+_esd_import_locked() {
     # Hang-proof git for headless enrollment: never prompt for credentials
     # on a tty (a failed credential helper otherwise blocks forever on
     # /dev/tty — no keyboard exists on this device), and abort transfers

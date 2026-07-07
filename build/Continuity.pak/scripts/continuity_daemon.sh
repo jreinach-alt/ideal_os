@@ -218,6 +218,36 @@ cd_shutdown() {
     exit 0
 }
 
+# cd_poll_once — one poll cycle. Factored out of the loop so tests can
+# drive single cycles.
+cd_poll_once() {
+    # A cold start deferred at boot (offline WiFi race) must be retried
+    # once the network appears — otherwise the sentinel never exists and
+    # every poll of the whole session errors out. Field-found on the
+    # first real save test.
+    if cs_is_cold_start "$CONTINUITY_REPO_DIR"; then
+        if pal_is_online; then
+            pal_log "info" "Retrying deferred cold start"
+            cs_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "Deferred cold start had errors"
+        else
+            pal_log "info" "Cold start still deferred — waiting for network"
+        fi
+        return 0
+    fi
+
+    # WiFi recovery: push queued commits when connectivity returns
+    if pal_is_online; then
+        if se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
+            pal_log "info" "WiFi available — pushing queued commits"
+            se_push "$CONTINUITY_REPO_DIR" || pal_log "warn" "WiFi recovery push failed"
+        fi
+    fi
+
+    # Runtime poll
+    rp_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "Poll cycle had errors"
+    return 0
+}
+
 # cd_poll_loop — runtime sync loop
 cd_poll_loop() {
     # Set trap after boot dispatch
@@ -226,16 +256,7 @@ cd_poll_loop() {
     pal_log "info" "Entering poll loop (${CONTINUITY_POLL_INTERVAL}s interval)"
 
     while true; do
-        # WiFi recovery: push queued commits when connectivity returns
-        if pal_is_online; then
-            if se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
-                pal_log "info" "WiFi available — pushing queued commits"
-                se_push "$CONTINUITY_REPO_DIR" || pal_log "warn" "WiFi recovery push failed"
-            fi
-        fi
-
-        # Runtime poll
-        rp_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "Poll cycle had errors"
+        cd_poll_once
 
         # Backgrounded sleep + wait: a SIGTERM during the sleep interrupts
         # `wait` immediately, so shutdown never blocks up to a full interval.

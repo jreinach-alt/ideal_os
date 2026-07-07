@@ -58,6 +58,10 @@ assert_file_not_exists() {
 TEST_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
+# Fast enrollment-lock timing for every esd_import call in this file
+ESD_LOCK_WAIT_TICKS=2
+ESD_LOCK_STALE_SECONDS=600
+
 # Disable commit signing globally for this test process
 GIT_CONFIG_COUNT=1
 GIT_CONFIG_KEY_0="commit.gpgsign"
@@ -190,6 +194,31 @@ TESTJSON
 rc=0; esd_import >/dev/null 2>&1 || rc=$?
 assert_rc "esd_import already enrolled returns 0" 0 "$rc"
 assert_file_not_exists "esd_import deletes setup.json when already enrolled" "$CONTINUITY_SD_ROOT/setup.json"
+
+# --- Enrollment lock: mutual exclusion between entry points ---
+
+LOCK_DIR="$CONTINUITY_SD_ROOT/.continuity/.enroll_lock"
+
+# Held fresh lock → esd_import gives up after the wait window (rc 1)
+mkdir -p "$LOCK_DIR"
+date +%s > "$LOCK_DIR/started_at"
+cat > "$CONTINUITY_SD_ROOT/setup.json" <<TESTJSON2
+{
+  "repo_url": "file://$BARE_REMOTE",
+  "pat": "test-pat-123",
+  "device_name": "test-device"
+}
+TESTJSON2
+rc=0; esd_import >/dev/null 2>&1 || rc=$?
+assert_rc "esd_import blocked by fresh lock returns 1" 1 "$rc"
+assert_file_exists "setup.json untouched while locked" "$CONTINUITY_SD_ROOT/setup.json"
+
+# Stale lock (ancient started_at) → stolen, import proceeds
+printf '1000000\n' > "$LOCK_DIR/started_at"
+rc=0; esd_import >/dev/null 2>&1 || rc=$?
+assert_rc "stale lock stolen, import proceeds" 0 "$rc"
+assert_file_not_exists "lock released after import" "$LOCK_DIR"
+rm -f "$CONTINUITY_SD_ROOT/setup.json"
 
 # --- Summary ---
 printf '\ntest_enroll_sd_card: %s passed, %s failed\n' "$passed" "$failed"
