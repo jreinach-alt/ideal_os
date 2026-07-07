@@ -203,34 +203,101 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 **Goal:** Working save sync on a TrimUI Brick. Core sync is already built — this phase wraps it in platform-specific daemon lifecycle and user-facing UI.
 
-### Sprint 1.1 — NextUI Daemon
+### Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Planned
+**Status:** Implemented — HARDWARE-VALIDATED 2026-07-07 (first successful enrollment on TrimUI Brick; device registration pushed to user repo). Pending formal approval; see sprint-1.1-1.3-summary.md.
 
 **Scope:**
-- Implement `src/platforms/nextui/continuity_daemon.sh` — main daemon loop
-- Sources NextUI PAL, then core modules
-- `auto.sh` hook integration for boot-time launch
-- PID file management (prevent duplicate instances)
-- Boot: detect state (cold start vs normal boot vs stale boot) → run appropriate sync phase
-- Runtime: poll loop calling `runtime_poll` at 30-second intervals
-- Graceful shutdown on SIGTERM (final push attempt, update sentinel)
-- Manual test checklist for on-device validation
+- Implement `src/platforms/nextui/continuity_daemon.sh` — daemon skeleton
+- `auto.sh` boot hook for NextUI (non-blocking, starts daemon in background)
+- PID file management in `/tmp/` (prevent duplicate instances, auto-cleanup on reboot)
+- Module loading: source NextUI PAL + all core modules in dependency order
+- Enrollment integration: detect `setup.json`, run SD card enrollment, verify enrolled state
+- Log file setup (stderr redirect to `/mnt/SDCARD/.continuity/continuity.log`)
 
 **Acceptance Criteria:**
 - Daemon starts on boot via auto.sh
-- Correctly dispatches to cold start, boot pull, or stale boot on startup
-- Runtime poll detects changes within 30 seconds
-- Commits and pushes when WiFi is available
-- Queues commits locally when offline, pushes when connectivity returns
-- Clean shutdown on SIGTERM with sentinel update
-- Core tests pass under `busybox ash`
+- PID file prevents duplicate instances
+- Enrollment runs automatically when `setup.json` is present
+- Daemon exits cleanly after enrollment (boot dispatch in Sprint 1.2)
+- All tests pass under `busybox ash`
 
-**Dependencies:** Sprint 0.8 (all core sync phases + conflict handler)
+**Dependencies:** Sprint 0.10 (all core modules complete)
 
 ---
 
-### Sprint 1.2 — NextUI Tool PAK
+### Sprint 1.2 — Boot Dispatch
+
+**Status:** Implemented — pending approval (QA'd 2026-07-06)
+
+**Scope:**
+- Boot phase detection: cold start (no sentinel) vs stale boot (sentinel + no clean_shutdown) vs normal boot (sentinel + clean_shutdown)
+- Dispatch to `cs_run`, `sb_run`, or `bp_run` accordingly
+- Clean shutdown marker consumed on normal boot
+- Boot dispatch errors are non-fatal (logged, daemon continues)
+
+**Acceptance Criteria:**
+- Correctly dispatches to cold start, boot pull, or stale boot on startup
+- Saves synced to/from repo during boot
+- Boot failures do not prevent daemon from continuing
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.1 (daemon bootstrap + enrollment)
+
+---
+
+### Sprint 1.3 — Poll Loop + Graceful Shutdown
+
+**Status:** Implemented — pending approval (QA'd 2026-07-06)
+
+**Scope:**
+- Runtime poll loop: call `rp_run` every 30 seconds
+- SIGTERM handler: final push attempt, conditional clean shutdown marker, PID cleanup
+- Trap set after boot dispatch (not before)
+- Clean shutdown marker written only when no unpushed commits remain
+
+**Acceptance Criteria:**
+- Runtime poll detects changes within 30 seconds
+- Commits and pushes when WiFi is available
+- Clean shutdown on SIGTERM with final push
+- After clean shutdown → next boot is normal boot pull
+- After unclean shutdown (SIGKILL) → next boot is stale recovery
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.2 (boot dispatch)
+
+---
+
+### Sprint 1.4 — WiFi Recovery, Notifications, Log Management
+
+**Status:** Draft
+
+**Scope:**
+- WiFi recovery: push queued commits when connectivity returns (checked at poll-loop top)
+- `pal_on_sync_result` implementation in NextUI PAL (colored dots via `show2.elf`)
+- Log rotation: size-based (256 KB), 1 backup, ~512 KB max disk usage
+
+**Acceptance Criteria:**
+- Queues commits locally when offline, pushes when connectivity returns
+- Green/yellow dots appear transiently on sync events
+- Red dot persists for conflicts/errors
+- Graceful degradation if `show2.elf` unavailable
+- Log stays bounded at ~512 KB
+- All tests pass under `busybox ash`
+
+**Dependencies:** Sprint 1.3 (poll loop + shutdown)
+
+---
+
+### Sprint 1.6 — OTA Updates
+
+**Status:** Implemented — pending approval (2026-07-07, spec: sprint-1.6-spec.md)
+
+**Scope:** git-based over-the-air updates using the bundled git — persistent sparse clone of the tracked PAK, channel from build branch, verified staged apply, X/B on-device prompt. Card swaps only for binaries and bootstrap breakage.
+
+---
+
+### Sprint 1.5 — NextUI Tool PAK
 
 **Status:** Planned
 
@@ -248,13 +315,25 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 - Conflict resolution presents all `.local` files with device names
 - Unlink removes device registration and clears credentials
 
-**Dependencies:** Sprint 1.1 (daemon running)
+**Dependencies:** Sprint 1.4 (full daemon running)
 
 ---
 
 ## Phase 2 — Second Platform (RetroDeck / Steam Deck)
 
 **Goal:** Cross-device sync works between TrimUI Brick and Steam Deck. Validates the PAL architecture with a fundamentally different platform.
+
+### Sprint 2.0 — Save-Format Canonicalization (design approved first)
+
+**Scope:**
+- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07 with source-verified NextUI format taxonomy; approve before implementation)
+- Canonical repo format: raw SRAM as `<system>/<rom_basename>.srm`; name-style translation per platform map (`minui`/`retroarch`/`generic`); RZIP detection + quarantine (codec deferred to Phase 3)
+- Materialize saves only where the matching ROM exists (per-device sparse sync)
+- One-time repo migration script with dry-run
+
+**Dependencies:** Phase 1 complete. Must land before Sprint 2.3 (cross-device test needs shared identity).
+
+---
 
 ### Sprint 2.1 — RetroDeck PAL and Enrollment
 
@@ -293,6 +372,55 @@ New PAL implementation + enrollment trigger. Nearly identical to NextUI. Differe
 ### Sprint 3.2 — Android Client (outline)
 
 Java/Kotlin app implementing the PAL interface natively. JGit for git operations. `FileObserver` for change detection. Material UI for status and conflict resolution.
+
+---
+
+## Proposed — Save-State Sync (pending owner approval)
+
+Design drafted 2026-07-07 at owner request: `docs/design/save-state-sync.md`.
+Un-defers save states from opaque backup to same-core cross-device
+handoff (quicksave on one device, resume on another). Key findings:
+every roadmap platform's state payload reduces to bare libretro core
+data (RetroArch's loader accepts it as the legacy format — verified in
+source), so handoff is container transforms + metadata, no emulator
+changes. Phases S1–S3 in the doc; S1 rides with Sprint 2.0.
+**Owner decisions:** platform list = OnionOS (confirmed 2026-07-07;
+MuOS reading was wrong). Still open: auto-slot handoff default;
+conflict-policy approval (states = last-writer-wins per slot, history
+as undo — unlike saves). Cross-emulator tier: see
+`docs/design/state-transmutation.md` (R&D framework, perpetually
+experimental; repo-side compute via the Continuity Transmuter).
+
+## Sync robustness backlog (gap review 2026-07-07)
+
+From an offline-queue/dedupe contract review; ordered by severity:
+
+1. ~~In-session divergence never reconciles~~ **FIXED 2026-07-07**:
+   `cd_poll_once` now detects commits that would not push while
+   online and runs the stale-boot reconcile inline, throttled
+   (`CONTINUITY_RECONCILE_COOLDOWN_TICKS`, default 10). Proven by
+   harness scenario S2b (poll ticks only — no reboot) and daemon
+   unit cases.
+2. ~~Misleading failure message~~ **FIXED 2026-07-07**: rejected
+   pushes now notify "Push rejected — will reconcile" (git's real
+   stderr was always in the log).
+3. **`keep_newest` trusts device wall clocks** — MITIGATED
+   2026-07-07: refuses to guess when either timestamp is missing
+   (falls back to manual/prompt). Residual: a plausibly-wrong clock
+   still wins ties; preflight fails hard on absurd clocks; UI default
+   remains `prompt`. Accepted for now.
+4. **Clock-set-backwards blind spot in the poll sentinel**: a save
+   written while the device clock is behind the sentinel's mtime is
+   invisible to `find -newer` until the next boot's full catch-up
+   scan (which always recovers it). Bounded; documented rather
+   than fixed — the fix (content-hash scanning every poll) costs more
+   than the window is worth on SD cards.
+
+Verified-covered (no action): offline commit queuing + WiFi-recovery
+push + shutdown final push; two-device offline weave incl. one-sided
+adds (harness S5); cmp-based no-op dedupe; OTA version-parity
+adoption; enrollment offline retry; conflict resolution while offline
+queues and pushes on recovery.
 
 ---
 

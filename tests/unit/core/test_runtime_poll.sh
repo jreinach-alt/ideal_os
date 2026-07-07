@@ -288,6 +288,12 @@ fi
 # Skip if running as root (chmod 555 does not prevent writes for root)
 if [ "$(id -u)" -ne 0 ]; then
     setup_poll_env "us2"
+    # touch on an EXISTING file succeeds for its owner regardless of a
+    # read-only parent (utimensat ownership rule) — remove the sentinel
+    # so touch must CREATE through the 555 directory to fail.
+    # (Latent for the repo's whole pre-CI life: this branch only runs
+    # unprivileged, and local sessions were always root.)
+    rm -f "$_PE_REPO/.continuity/sentinel"
     chmod 555 "$_PE_REPO/.continuity"
     rc=0; rp_update_sentinel "$_PE_REPO" 2>/dev/null || rc=$?
     assert_rc "update_sentinel: returns 1 on read-only" 1 "$rc"

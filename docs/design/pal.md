@@ -1,6 +1,6 @@
 # Continuity — Platform Abstraction Layer (PAL)
 
-**Status:** Draft
+**Status:** Approved (0.2) — addendum 2026-07-07 pending approval
 **Date:** 2026-03-13
 
 ## Purpose
@@ -394,3 +394,47 @@ The original architecture spec defined `wifi_monitor.sh` as a standalone core mo
 - The PAL already abstracts all platform-specific behavior — connectivity fits naturally
 
 There is no separate `wifi_monitor.sh` in the revised architecture. The `architecture.md` spec will be updated to reflect this when Sprint 0.2 is implemented.
+
+---
+
+## Addendum (2026-07-07) — PAL surface as hardware-validated on NextUI
+
+The Phase 1 bring-up added contract surface beyond the original draft.
+Platform PAL authors (Onion, RetroDeck, Android) must account for:
+
+### Additional variables
+
+| Variable | Meaning |
+|----------|---------|
+| `CONTINUITY_PAK_DIR` | Root of the installed platform package. Set by the entry point from its own location; the PAL provides a platform default. All bundled tooling paths derive from it. |
+| `CONTINUITY_SD_ROOT` | User-visible storage root (`setup.json` staging, diagnostic report target). |
+
+All PAL path variables are **env-defaulted** (`${VAR:-default}`) so test
+sandboxes can redirect them; production leaves them unset.
+
+### Bundled-git environment (any platform without a system git)
+
+The PAL must export, pointing into the package's own copies, guarded on
+existence and with pre-set env winning: `GIT_EXEC_PATH` (the exec dir
+must contain `git` itself plus `git-remote-http` and `git-remote-https`
+— git spawns helpers by re-invoking `git remote-<proto>`),
+`GIT_SSL_CAINFO` (pristine Mozilla bundle), `GIT_TEMPLATE_DIR`, and the
+package `bin/` on `PATH`. See `docs/platform/nextui-field-notes.md`.
+
+### Function contract clarifications
+
+- `pal_is_online` must honor `CONTINUITY_FORCE_ONLINE=1` (test/debug
+  override) and be safe to poll (the daemon waits on it at boot; boot
+  enrollment races platform WiFi bring-up).
+- `pal_log` writes to stderr only; entry points own log-file redirection.
+- Headless git safety belongs to callers (`GIT_TERMINAL_PROMPT=0`,
+  low-speed abort) — implemented in `enroll_sd_card.sh`; replicate in
+  any new enrollment trigger.
+
+### Platform-integration surface deliberately OUTSIDE the PAL
+
+Display (`show2.elf` on NextUI), boot-hook installation
+(`$USERDATA_PATH/auto.sh`), and button input (`/dev/input/js0`,
+platform-specific numbering) live in platform entry-point scripts
+(`launch.sh`, `enroll_ui.sh`), not the PAL, and must degrade gracefully:
+sync must work with all three absent.

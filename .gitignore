@@ -18,3 +18,7 @@ Thumbs.db
 # Editor directories
 .vscode/
 .idea/
+
+# Build output (intermediate artifacts)
+build/*
+!build/Continuity.pak/

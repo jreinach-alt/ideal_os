@@ -225,6 +225,77 @@ Scopes: `core`, `nextui`, `onion`, `retrodeck`, `android`, `enrollment`, `config
 - Tests must run under `busybox ash` for core and constrained-platform code.
 - Tests must be self-contained — create temp dirs, clean up after.
 
+## NextUI Build, Validation & Delivery Protocol
+
+Hardware-validated on the TrimUI Brick 2026-07-07. Details and the full
+trap list: `docs/platform/nextui-field-notes.md` — **read it before any
+NextUI platform work.**
+
+1. **Build:** `scripts/build_git.sh` (cross-compiles git + https helpers,
+   once per toolchain change) → `scripts/build_busybox.sh` (the daemon's
+   pinned interpreter, fail-open) → `scripts/build_pak.sh` (assembles
+   `build/Continuity.pak` with version stamp, OTA channel, checksums).
+2. **Validate before shipping any binary:** run the SHIPPED artifact under
+   `qemu-aarch64-static` against live GitHub **with the host git hidden**
+   (`mv /usr/bin/git` during the test) and every ARM→ARM exec edge
+   shimmed. Never use binfmt_misc in the build container. For busybox,
+   run `scripts/validate_busybox.sh` against the shipped binary (69-check
+   matrix: direct dispatch, in-process tier, PATH fall-through).
+3. **Deliver as a versioned zip** (`Continuity.pak-<version>.zip`) built
+   from the verified tree. Never instruct anyone to copy from a git
+   working tree (line-ending smudge history; see field notes).
+4. **After first enrollment, prefer OTA** (`scripts/update.sh`, tap-driven
+   on-device). Releases are CHANNELS (stable/nightly) pinned in
+   `release/channels.json` on main — never branches. Publish/promote/
+   rollback via `scripts/publish_channel.sh` (takes effect when the
+   manifest commit is reachable from origin/main); contract in
+   `release/README.md`. Card swaps are for a broken launch/update
+   bootstrap and for binaries that are NOT fail-open (git). The
+   vendored busybox is explicitly OTA-safe: a torn copy fails the
+   daemon's self-test and falls back to device sh.
+5. **Observability is a requirement:** every failure must name itself
+   on-screen with the build stamp; the preflight report goes to
+   `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb
+   or diagnostics behind env vars nothing on-device sets.
+6. **Quality gate (tiered, local — there is no remote CI, by owner
+   decision):** `scripts/gate.sh`, invoked by `.githooks/pre-push`
+   (enabled by Startup Step 2). Feedback is synchronous; the gate
+   passing IS the verification.
+   - **fast** (~15s, every ordinary push): CRLF scan + shellcheck
+     error gate. Dev-branch pushes are checkpoints; nothing consumes
+     them automatically.
+   - **full** (~4min: fast + suite as current user + suite
+     UNPRIVILEGED (root-only-skipped branches once hid a real bug) +
+     shipped-PAK integrity: checksums, busybox matrix, git under
+     qemu) — REQUIRED, and mostly automated, wherever a mistake
+     travels: pushes touching `build/Continuity.pak` (hook
+     auto-escalates — pre-merge the device's legacy channel follows
+     the branch head), every channel publish (`publish_channel.sh`
+     runs it), before creating/updating a PR, and at session closeout
+     (below). `CONTINUITY_GATE=full|fast` overrides;
+     `CONTINUITY_SKIP_HOOK=1` bypasses in emergencies — say so.
+   If a hosted runner ever returns, publish conclusions as git notes
+   (refs/notes/ci) — the API/connector is not a reliable channel.
+
+## Model Regimen
+
+Default development model: **Opus**, following the sprint methodology
+(spec → implement → QA → summary) with the protocols in this file.
+Escalate to **Fable** (sparingly) when a problem matches these classes:
+
+- Cross-compilation / toolchain bring-up (new binaries, new platforms)
+- Binary/system internals (git transport plumbing, exec semantics,
+  kernel-adjacent debugging, emulation)
+- A device failure that survives TWO Opus fix attempts with the
+  diagnostic file in hand
+- Architecture decisions that change the PAL contract or security model
+
+Session closeout: if the session changed code, run `scripts/gate.sh
+full` and fix (or explicitly hand off) any failure — the fast per-push
+gate defers the expensive checks to exactly this boundary.
+Before ending any session, update the active sprint summary with defects
+found/fixed and open items — the next session's context depends on it.
+
 ## Session Startup Protocol
 
 ### Step 1 — Read CLAUDE.md
@@ -235,6 +306,7 @@ Read this file.
 busybox ash -c 'echo ok' 2>/dev/null || apt-get install -y busybox-static
 command -v shellcheck >/dev/null 2>&1 || apt-get install -y shellcheck
 command -v git >/dev/null 2>&1 || apt-get install -y git
+git config core.hooksPath .githooks   # the blocking pre-push gate
 ```
 
 ### Step 3 — Read the roadmap

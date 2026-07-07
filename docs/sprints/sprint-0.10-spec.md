@@ -167,7 +167,7 @@ timestamp=2026-03-15T14:30:00Z
 ```
 
 **Purpose:** Lets any process query "what was the last notification?" without being present when it fired. Used by:
-- Tool PAK status screen (Sprint 1.2): "Last sync: Pushed 1 save, 2 minutes ago"
+- Tool PAK status screen (Sprint 1.5): "Last sync: Pushed 1 save, 2 minutes ago"
 - Boot-time display: show last status on startup
 - `ss_get_last_status` function (see below)
 
@@ -320,7 +320,7 @@ Platforms implement `pal_on_sync_result` according to these rules:
 
 | Item | Sprint |
 |------|--------|
-| NextUI `pal_on_sync_result` implementation (show2.elf dot) | 1.1 |
+| NextUI `pal_on_sync_result` implementation (show2.elf dot) | 1.4 |
 | RetroDeck `pal_on_sync_result` implementation (D-Bus notification) | 2.1 |
 | Android `pal_on_sync_result` implementation (toast/notification) | 3.1 |
 | Notification preferences (disable notifications, quiet hours) | post-1.0 |
