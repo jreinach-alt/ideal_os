@@ -257,17 +257,19 @@ NextUI platform work.**
    on-screen with the build stamp; the preflight report goes to
    `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb
    or diagnostics behind env vars nothing on-device sets.
-6. **Quality gates:** the BLOCKING gate is the local pre-push hook
-   (`.githooks/pre-push`: CRLF + shellcheck + full suite — enabled by
-   Startup Step 2; bypass only in an emergency and say so). GitHub
-   Actions CI remains the non-blocking BACKSTOP (unprivileged user,
-   pristine environment — differences that have caught real bugs).
-   **Follow-through rule:** a session that pushes does not end its
-   turn with that push's CI run unchecked — verify it completed, and
-   fix or report a failure yourself; never leave a red run for the
-   owner to discover. Check over GIT transport (connector-independent):
-   `sh scripts/ci_status.sh <sha> --wait` — CI publishes each run's
-   conclusion as a git note (refs/notes/ci) on the tested commit.
+6. **Quality gate:** the local pre-push hook is THE gate — there is no
+   remote CI, by owner decision (Actions burned plan minutes, doubled
+   runs per push once a PR existed, failed on third-party infra, and
+   its failure emails reached only the owner). `.githooks/pre-push`
+   (enabled by Startup Step 2) runs: CRLF scan, shellcheck error gate,
+   the full suite as the current user, the full suite UNPRIVILEGED
+   (root-only-skipped branches once hid a real bug), and shipped-PAK
+   integrity (checksums + busybox matrix + git under qemu). The hook
+   passing IS the verification — feedback is synchronous, there is
+   nothing to check afterwards. Bypass (`CONTINUITY_SKIP_HOOK=1` /
+   `--no-verify`) only in an emergency, and say so. If a hosted
+   runner ever returns, publish conclusions as git notes
+   (refs/notes/ci) — the API/connector is not a reliable channel.
 
 ## Model Regimen
 

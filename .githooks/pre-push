@@ -1,20 +1,25 @@
 #!/bin/sh
-# Continuity pre-push gate — the BLOCKING quality gate runs where the
-# work happens, so failures surface to whoever is pushing, immediately,
-# instead of asynchronously in a GitHub Actions run nobody is watching.
-# (Owner-requested after a red CI run had to be relayed back by hand.)
+# Continuity pre-push gate — THE quality gate. There is no remote CI
+# by owner decision (GitHub Actions burned plan minutes, doubled runs
+# per push once a PR existed, failed on third-party infrastructure,
+# and its failure emails went only to the owner). Everything runs
+# here, where the pusher gets the feedback immediately.
 #
-# Order: cheapest first. CRLF scan (instant) → ShellCheck error gate
-# (seconds) → full test suite (~2 min). Any failure blocks the push.
+# Order: cheapest first.
+#   1. CRLF scan (instant)
+#   2. ShellCheck error gate (seconds)
+#   3. Full test suite as the current user (~2 min)
+#   4. Full test suite UNPRIVILEGED (root-only branches like the
+#      read-only-filesystem cases only execute without root — this
+#      pass exists because exactly such a latent bug once shipped)
+#   5. Shipped-PAK integrity: checksums manifest byte-verify, the
+#      busybox validation matrix, bundled git under qemu
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass (emergencies only, say so in the commit/PR):
 #   git push --no-verify   or   CONTINUITY_SKIP_HOOK=1 git push
-#
-# GitHub Actions CI stays as the non-blocking BACKSTOP: it runs the
-# same suite in an environment this gate cannot replicate (unprivileged
-# user, pristine checkout, its own toolchain) — that difference is
-# exactly what caught the latent root-skip test bug on CI run #1.
+# Skip only the second suite pass (slow-half):
+#   CONTINUITY_GATE_FAST=1 git push
 set -e
 
 if [ "${CONTINUITY_SKIP_HOOK:-0}" = "1" ]; then
@@ -45,10 +50,67 @@ if command -v shellcheck >/dev/null 2>&1; then
         tests/unit/*/*.sh tests/integration/*.sh tests/fixtures/*.sh
     printf 'ok\n'
 else
-    printf 'SKIPPED (shellcheck not installed — install it; CI will not skip)\n' >&2
+    printf 'FAIL (shellcheck not installed — Startup Step 2 installs it)\n' >&2
+    exit 1
 fi
 
-printf 'pre-push: full test suite...\n'
+printf 'pre-push: full test suite (current user)...\n'
 sh scripts/test.sh
+
+if [ "${CONTINUITY_GATE_FAST:-0}" = "1" ]; then
+    printf 'pre-push: CONTINUITY_GATE_FAST=1 — unprivileged pass SKIPPED\n' >&2
+elif [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1; then
+    printf 'pre-push: full test suite (unprivileged)...\n'
+    NR_TMP=$(mktemp -d /tmp/continuity-gate.XXXXXX)
+    chmod 777 "$NR_TMP"
+    nr_rc=0
+    setpriv --reuid=65534 --regid=65534 --clear-groups \
+        env HOME="$NR_TMP" TMPDIR="$NR_TMP" \
+        sh scripts/test.sh > "$NR_TMP/out" 2>&1 || nr_rc=$?
+    if [ "$nr_rc" -ne 0 ]; then
+        printf 'pre-push: UNPRIVILEGED suite FAILED:\n' >&2
+        tail -40 "$NR_TMP/out" >&2
+        rm -rf "$NR_TMP"
+        exit 1
+    fi
+    tail -1 "$NR_TMP/out"
+    rm -rf "$NR_TMP"
+else
+    printf 'pre-push: unprivileged pass skipped (not root or setpriv missing)\n' >&2
+fi
+
+printf 'pre-push: shipped-PAK integrity... '
+if [ -f build/Continuity.pak/checksums.txt ]; then
+    (
+        cd build/Continuity.pak
+        while IFS=' ' read -r sum size path; do
+            [ -n "$path" ] || continue
+            actual_size=$(wc -c < "$path")
+            actual_sum=$(sha256sum "$path" | cut -d' ' -f1)
+            if [ "$actual_size" != "$size" ] || [ "$actual_sum" != "$sum" ]; then
+                printf 'MISMATCH: %s\n' "$path" >&2
+                exit 1
+            fi
+        done < checksums.txt
+    )
+    printf 'ok\n'
+else
+    printf 'skipped (no manifest)\n'
+fi
+
+if command -v qemu-aarch64-static >/dev/null 2>&1; then
+    if [ -f build/Continuity.pak/bin/busybox ]; then
+        printf 'pre-push: busybox validation matrix... '
+        sh scripts/validate_busybox.sh build/Continuity.pak/bin/busybox >/dev/null
+        printf 'ok\n'
+    fi
+    if [ -f build/Continuity.pak/bin/git ]; then
+        printf 'pre-push: bundled git under qemu... '
+        qemu-aarch64-static build/Continuity.pak/bin/git --version >/dev/null
+        printf 'ok\n'
+    fi
+else
+    printf 'pre-push: qemu checks skipped (qemu-aarch64-static missing)\n' >&2
+fi
 
 printf 'pre-push: gate PASSED\n'

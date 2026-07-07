@@ -117,12 +117,19 @@ eui_next_button() {
 eui_prompt_button() {
     local ticks btn a
     ticks="$1"; shift
-    eui_btn_listener_start "${EUI_BTN_PROMPT_FILE:-/tmp/continuity_prompt.buttons}"
+    # Per-process default path: a FIXED shared name collides across
+    # users (a root-owned leftover is untruncatable by others) and
+    # across concurrent runs. TMPDIR is respected for sandboxed tests;
+    # devices without TMPDIR keep using /tmp (tmpfs).
+    local _eui_prompt_file
+    _eui_prompt_file="${EUI_BTN_PROMPT_FILE:-${TMPDIR:-/tmp}/continuity_prompt.$$.buttons}"
+    eui_btn_listener_start "$_eui_prompt_file"
     while [ "$ticks" -gt 0 ]; do
         if btn=$(eui_next_button); then
             for a in "$@"; do
                 if [ "$btn" = "$a" ]; then
                     eui_btn_listener_stop
+                    rm -f "$_eui_prompt_file" "$_eui_prompt_file.seen" 2>/dev/null || true
                     printf '%s\n' "$btn"
                     return 0
                 fi
@@ -132,6 +139,7 @@ eui_prompt_button() {
         ticks=$((ticks - 1))
     done
     eui_btn_listener_stop
+    rm -f "$_eui_prompt_file" "$_eui_prompt_file.seen" 2>/dev/null || true
     return 1
 }
 

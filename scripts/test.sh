@@ -78,6 +78,10 @@ passed=0
 failed=0
 total=0
 
+# Counter file lives in TMPDIR, never the repo — the gate runs the
+# suite as an unprivileged user for whom the repo is read-only.
+_counts_file="${TMPDIR:-/tmp}/continuity_test_counts.$$"
+
 printf '%s\n' "$test_files" | while read -r tf; do
     total=$((total + 1))
     if run_test "$tf"; then
@@ -87,13 +91,13 @@ printf '%s\n' "$test_files" | while read -r tf; do
     fi
 
     # Write counters to temp file (subshell workaround)
-    printf '%d %d %d\n' "$passed" "$failed" "$total" > "$REPO_ROOT/.test_counts"
+    printf '%d %d %d\n' "$passed" "$failed" "$total" > "$_counts_file"
 done
 
 # Read final counters
-if [ -f "$REPO_ROOT/.test_counts" ]; then
-    read -r passed failed total < "$REPO_ROOT/.test_counts"
-    rm -f "$REPO_ROOT/.test_counts"
+if [ -f "$_counts_file" ]; then
+    read -r passed failed total < "$_counts_file"
+    rm -f "$_counts_file"
 fi
 
 printf '\nResults: %d passed, %d failed, %d total\n' "$passed" "$failed" "$total"
