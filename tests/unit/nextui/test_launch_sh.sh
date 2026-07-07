@@ -73,6 +73,8 @@ cp "$PROJECT_ROOT/src/platforms/nextui/enroll_ui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/preflight.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/update.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT"/src/core/*.sh "$PAK/scripts/core/"
+mkdir -p "$PAK/config/platform_maps"
+cp "$PROJECT_ROOT/config/platform_maps/nextui.json" "$PAK/config/platform_maps/"
 printf '0.1.0-test\n' > "$PAK/version.txt"
 chmod +x "$PAK/launch.sh"
 

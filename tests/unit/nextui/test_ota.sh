@@ -118,6 +118,15 @@ assert_eq "v4 applied" "0.1.0-v4" "$(cat "$PAK/version.txt")"
 after=$(stat -c %Y "$PAK/bin/git" 2>/dev/null || printf '%s' "$before")
 assert_eq "same-size binary untouched" "$before" "$after"
 
+# --- Test 5b: card-swapped deploy parity — same version is adopted, not re-offered ---
+publish_pak "0.1.0-v5" "fifth-build"
+printf '0.1.0-v5\n' > "$PAK/version.txt"   # simulate card swap of v5
+rm -f "$HOME_DIR/.ota_commit"              # card swap never writes OTA state
+rc=0; ota_check >/dev/null || rc=$?
+assert_eq "matching deployed version not re-offered" "1" "$rc"
+head_now=$(git -C "$UPSTREAM" rev-parse HEAD)
+assert_eq "commit adopted as current" "$head_now" "$(cat "$HOME_DIR/.ota_commit")"
+
 # --- Test 6: corrupt fetched tree refused ---
 CORRUPT="$TEST_TMPDIR/corrupt-tree"
 mkdir -p "$CORRUPT/scripts"

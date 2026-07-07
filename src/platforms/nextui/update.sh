@@ -117,6 +117,16 @@ ota_check() {
     new_version=$(cat "$OTA_REPO/build/Continuity.pak/version.txt" 2>/dev/null)
     new_version="${new_version:-unknown}"
 
+    # Version parity: a card-swapped deploy never wrote .ota_commit, so
+    # commit comparison alone re-offers the build the user already has.
+    # If the PAK's own version matches the fetched one, adopt the commit
+    # as current and report up to date. (Field-found by the user.)
+    if [ "$new_version" = "$(cat "$OTA_PAK_DIR/version.txt" 2>/dev/null)" ]; then
+        printf '%s\n' "$head" > "$OTA_HOME/.ota_commit"
+        ota_log "Deployed build $new_version already matches $head — adopting"
+        return 1
+    fi
+
     ota_log "Update available: $new_version ($head)"
     printf '%s %s\n' "$new_version" "$head"
     return 0

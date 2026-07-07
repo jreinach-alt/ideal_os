@@ -186,6 +186,18 @@ rc=0; pf_run "$TEST_TMPDIR/r9.txt" || rc=$?
 assert_eq "bad setup.json fails" "1" "$rc"
 assert_contains "bad setup.json named" "$TEST_TMPDIR/r9.txt" "unparseable"
 
+# --- Test 10: mapping check parses the real map and translates a probe ---
+printf '{\n  "repo_url": "https://github.com/u/r",\n  "pat": "sekrit999",\n  "device_name": "brick"\n}\n' \
+    > "$SDROOT/setup.json"    # restore after test 9's garbage
+CONTINUITY_SAVES_ROOT="$TEST_TMPDIR/Saves"
+cp "$PROJECT_ROOT/config/platform_maps/nextui.json" "$TEST_TMPDIR/platform_map.json"
+pal_get_platform_map() { printf '%s\n' "$TEST_TMPDIR/platform_map.json"; }
+. "$PROJECT_ROOT/src/core/path_mapper.sh"
+R10="$TEST_TMPDIR/r10.txt"
+rc=0; pf_run "$R10" || rc=$?
+assert_eq "healthy run with mapper stays green" "0" "$rc"
+assert_contains "mapping check passes with real map" "$R10" "watched dirs; SFC probe translates"
+
 # --- Report ---
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

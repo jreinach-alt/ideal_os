@@ -16,7 +16,7 @@ cd_detect_changes() {
 
     "$CONTINUITY_GIT_BIN" -C "$repo_dir" status --porcelain -uall 2>/dev/null | \
         sed 's/^...//' | \
-        grep '\.srm$' || true
+        grep '\.\(srm\|sav\)$' || true
     return 0
 }
 
@@ -28,7 +28,7 @@ cd_list_repo_saves() {
     local repo_dir
     repo_dir="$1"
 
-    find "$repo_dir" -name "*.srm" \
+    find "$repo_dir" \( -name "*.srm" -o -name "*.sav" \) \
         ! -path "*/.git/*" \
         ! -path "*/.continuity/*" 2>/dev/null | \
     while IFS= read -r abs_path; do
@@ -45,7 +45,7 @@ cd_list_device_saves() {
     pm_list_watched_dirs | while IFS= read -r dir; do
         [ -z "$dir" ] && continue
         [ -d "$dir" ] || continue
-        find "$dir" -name "*.srm" 2>/dev/null
+        find "$dir" \( -name "*.srm" -o -name "*.sav" \) 2>/dev/null
     done
     return 0
 }

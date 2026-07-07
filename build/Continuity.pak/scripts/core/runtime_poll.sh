@@ -24,7 +24,7 @@ rp_find_candidates() {
     repo_dir="$1"
     sentinel="$repo_dir/.continuity/sentinel"
 
-    find "$CONTINUITY_SAVES_ROOT" -name "*.srm" -newer "$sentinel" 2>/dev/null || true
+    find "$CONTINUITY_SAVES_ROOT" \( -name "*.srm" -o -name "*.sav" \) -newer "$sentinel" 2>/dev/null || true
     return 0
 }
 

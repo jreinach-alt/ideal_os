@@ -179,6 +179,25 @@ pf_check_github_tls() {
     esac
 }
 
+# pf_check_mapping — the platform map must parse ON THIS DEVICE's shell
+# userland and translate a real save path. A silently-empty map blinds
+# every scanner while everything else looks healthy.
+pf_check_mapping() {
+    local count probe
+    if ! command -v pm_load_platform_map >/dev/null 2>&1; then
+        pf_emit "info" "mapping" "path mapper not loaded in this context — skipped"
+        return 0
+    fi
+    pm_load_platform_map "$(pal_get_platform_map)" >/dev/null 2>&1
+    count=$(pm_list_watched_dirs 2>/dev/null | grep -c .)
+    probe=$(pm_local_to_repo "$CONTINUITY_SAVES_ROOT/SFC/Probe Game (USA).srm" 2>/dev/null)
+    if [ "$count" -gt 0 ] && [ "$probe" = "snes/Probe Game (USA).srm" ]; then
+        pf_emit "ok" "mapping" "$count watched dirs; SFC probe translates"
+    else
+        pf_emit "FAIL" "mapping" "watched dirs: ${count:-0}, SFC probe: '${probe:-empty}' — map parse broken on this device"
+    fi
+}
+
 pf_check_setup_json() {
     local f url name pat
     f="$CONTINUITY_SD_ROOT/setup.json"
@@ -233,6 +252,7 @@ pf_run() {
     pf_check_https_helper
     pf_check_binaries
     pf_check_ca_bundle
+    pf_check_mapping
     if pf_check_network; then
         pf_check_github_tls
     else

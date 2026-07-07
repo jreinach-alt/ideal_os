@@ -188,6 +188,15 @@ readonly CONTINUITY_POLL_INTERVAL="${CONTINUITY_POLL_INTERVAL:-30}"
 cd_shutdown() {
     pal_log "info" "Shutdown: SIGTERM received"
 
+    # Final sweep: "save → quit game → power off" is THE canonical
+    # handheld flow, and the freshly-flushed .srm may have landed after
+    # the last poll cycle. Commit it now so the push below carries it
+    # (or stale-boot pushes it next time if we're offline).
+    if ! cs_is_cold_start "$CONTINUITY_REPO_DIR"; then
+        rp_run "$CONTINUITY_REPO_DIR" 2>/dev/null || \
+            pal_log "warn" "Shutdown: final sweep had errors"
+    fi
+
     # Final push attempt
     if se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
         if pal_is_online; then

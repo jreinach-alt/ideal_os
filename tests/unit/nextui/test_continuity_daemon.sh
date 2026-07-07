@@ -386,8 +386,27 @@ assert_file_not_exists "1.3-C: no clean marker after failed push" \
     "$REPO/.continuity/clean_shutdown"
 assert_file_not_exists "1.3-C: PID removed even on failed push" "$CONTINUITY_PID_FILE"
 
+# Shutdown final sweep: a save flushed after the last poll (save → quit
+# → power off) must be committed by the shutdown handler
+touch "$REPO/.continuity/sentinel"
+rp_run() { touch "$TEST_TMPDIR/shutdown_sweep"; }
+pal_is_online() { return 0; }
+se_has_unpushed_commits() { return 1; }
+cd_write_pid
+rc=0; ( cd_shutdown ) 2>/dev/null || rc=$?
+assert_rc "shutdown with sweep exits 0" 0 "$rc"
+assert_file_exists "shutdown runs a final poll sweep" "$TEST_TMPDIR/shutdown_sweep"
+
+# ...but not before cold start ever completed (no sentinel → no sweep)
+rm -f "$REPO/.continuity/sentinel" "$TEST_TMPDIR/shutdown_sweep"
+cd_write_pid
+rc=0; ( cd_shutdown ) 2>/dev/null || rc=$?
+assert_file_not_exists "no sweep before first cold start" "$TEST_TMPDIR/shutdown_sweep"
+touch "$REPO/.continuity/sentinel"
+
 # Case D: unpushed + offline → NO clean marker
 rm -f "$REPO/.continuity/clean_shutdown"
+se_has_unpushed_commits() { return 0; }
 pal_is_online() { return 1; }
 se_push() { touch "$TEST_TMPDIR/offline_push"; return 1; }
 cd_write_pid

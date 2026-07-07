@@ -143,3 +143,37 @@ saving and expecting a commit.
   scope IS the security boundary.
 - OTA fetches the PROJECT repo anonymously (it is public — verified from
   the device itself by the preflight ls-remote probe).
+
+## Save format reality (field, 2026-07-07)
+
+- NextUI's COMPILED default save format is `.sav` (`config.h:180
+  CFG_DEFAULT_SAVEFORMAT = SAVE_FORMAT_SAV`); `.srm` variants exist
+  (SAVE_FORMAT_SRM is rzip-COMPRESSED). Scanners match both `*.srm` and
+  `*.sav`; contents are opaque blobs to the sync engine. Canonical
+  cross-platform extension normalization is deferred to the Phase 2
+  mapper spec (matters when the second platform arrives).
+- The platform NEVER SIGTERMs the daemon on reboot/poweroff — every boot
+  is a "stale" boot. That's by design tolerable (stale recovery is the
+  normal path), and it's why cd_shutdown may never run: do not rely on
+  it exclusively. The shutdown sweep exists for the graceful case; the
+  stale-boot catch-up covers the rest.
+- "Save → quit game → power off" is the canonical user flow: the .srm
+  flushes at quit and the daemon may be killed before the next 30s poll.
+  Covered twice: cd_shutdown runs a final rp_run sweep (graceful case),
+  and next boot's stale catch-up commits anything missed (kill case).
+
+## Save STATES (.st0-.st9) — scope decision (2026-07-07)
+
+Game-switcher/quicksave states live at `.userdata/shared/<TAG>-<core>/`
+(e.g. SFC-snes9x). They are NOT monitored and NOT synced, per the
+founding scope: save states are emulator-core-and-version-specific
+memory snapshots. A "shared cross-platform format" for states is not
+buildable — converting a snes9x snapshot for another core would require
+running both emulators; even core VERSION bumps break state loading.
+SRAM is the portable format and remains the sync unit.
+
+Recorded as a possible future opt-in (Phase 4 backlog): same-core
+best-effort state sync — opaque blobs namespaced `states/<tag>-<core>/`,
+delivered only to devices advertising the identical core, never
+conflict-merged, size-capped. Requires its own approved spec; do not
+implement casually.
