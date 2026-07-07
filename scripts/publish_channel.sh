@@ -48,6 +48,16 @@ SHA=$(git -C "$PROJECT_ROOT" rev-parse --verify "$TARGET^{commit}") || {
     exit 1
 }
 
+# Publishing is the moment bits reach devices — the FULL gate runs
+# here (it checks the working tree; publish from the tree state you
+# built). CONTINUITY_SKIP_GATE=1 bypasses in emergencies — say so.
+# (Suppressed under CONTINUITY_PUBLISH_ROOT: the test fixture repo has
+# no gate to run.)
+if [ -z "${CONTINUITY_PUBLISH_ROOT:-}" ] && [ "${CONTINUITY_SKIP_GATE:-0}" != "1" ]; then
+    printf 'publish: running the full gate (device-delivery moment)\n'
+    sh "$PROJECT_ROOT/scripts/gate.sh" full
+fi
+
 # ── Verify the commit's PAK from git objects ─────────────────────────
 VERSION=$(git -C "$PROJECT_ROOT" show "$SHA:build/Continuity.pak/version.txt" 2>/dev/null) || {
     printf 'ERROR: %s carries no build/Continuity.pak/version.txt\n' "$SHA" >&2

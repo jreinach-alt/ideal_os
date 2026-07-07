@@ -257,18 +257,24 @@ NextUI platform work.**
    on-screen with the build stamp; the preflight report goes to
    `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb
    or diagnostics behind env vars nothing on-device sets.
-6. **Quality gate:** the local pre-push hook is THE gate — there is no
-   remote CI, by owner decision (Actions burned plan minutes, doubled
-   runs per push once a PR existed, failed on third-party infra, and
-   its failure emails reached only the owner). `.githooks/pre-push`
-   (enabled by Startup Step 2) runs: CRLF scan, shellcheck error gate,
-   the full suite as the current user, the full suite UNPRIVILEGED
-   (root-only-skipped branches once hid a real bug), and shipped-PAK
-   integrity (checksums + busybox matrix + git under qemu). The hook
-   passing IS the verification — feedback is synchronous, there is
-   nothing to check afterwards. Bypass (`CONTINUITY_SKIP_HOOK=1` /
-   `--no-verify`) only in an emergency, and say so. If a hosted
-   runner ever returns, publish conclusions as git notes
+6. **Quality gate (tiered, local — there is no remote CI, by owner
+   decision):** `scripts/gate.sh`, invoked by `.githooks/pre-push`
+   (enabled by Startup Step 2). Feedback is synchronous; the gate
+   passing IS the verification.
+   - **fast** (~15s, every ordinary push): CRLF scan + shellcheck
+     error gate. Dev-branch pushes are checkpoints; nothing consumes
+     them automatically.
+   - **full** (~4min: fast + suite as current user + suite
+     UNPRIVILEGED (root-only-skipped branches once hid a real bug) +
+     shipped-PAK integrity: checksums, busybox matrix, git under
+     qemu) — REQUIRED, and mostly automated, wherever a mistake
+     travels: pushes touching `build/Continuity.pak` (hook
+     auto-escalates — pre-merge the device's legacy channel follows
+     the branch head), every channel publish (`publish_channel.sh`
+     runs it), before creating/updating a PR, and at session closeout
+     (below). `CONTINUITY_GATE=full|fast` overrides;
+     `CONTINUITY_SKIP_HOOK=1` bypasses in emergencies — say so.
+   If a hosted runner ever returns, publish conclusions as git notes
    (refs/notes/ci) — the API/connector is not a reliable channel.
 
 ## Model Regimen
@@ -284,6 +290,9 @@ Escalate to **Fable** (sparingly) when a problem matches these classes:
   diagnostic file in hand
 - Architecture decisions that change the PAL contract or security model
 
+Session closeout: if the session changed code, run `scripts/gate.sh
+full` and fix (or explicitly hand off) any failure — the fast per-push
+gate defers the expensive checks to exactly this boundary.
 Before ending any session, update the active sprint summary with defects
 found/fixed and open items — the next session's context depends on it.
 
