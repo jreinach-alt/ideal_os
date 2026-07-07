@@ -151,6 +151,23 @@ assert_rc "AC10: missing module exits 1" 1 "$rc"
 assert_file_not_exists "AC11: PID cleaned up on module failure" "$CONTINUITY_PID_FILE"
 ln -s "$PROJECT_ROOT/src/core/runtime_poll.sh" "$FAKE_PAK/scripts/core/runtime_poll.sh"
 
+# CRLF-corrupted module → exit 1 with a named error, PID cleaned up
+rm "$FAKE_PAK/scripts/core/runtime_poll.sh"
+sed 's/$/\r/' "$PROJECT_ROOT/src/core/runtime_poll.sh" \
+    > "$FAKE_PAK/scripts/core/runtime_poll.sh"
+cd_write_pid
+rc=0
+( CONTINUITY_PAK_DIR="$FAKE_PAK"; cd_load_modules ) 2>"$TEST_TMPDIR/crlf_err.txt" || rc=$?
+assert_rc "CRLF module exits 1" 1 "$rc"
+assert_file_not_exists "PID cleaned up on CRLF failure" "$CONTINUITY_PID_FILE"
+if grep -q "CRLF line endings in" "$TEST_TMPDIR/crlf_err.txt"; then
+    assert_eq "CRLF failure named in log" "named" "named"
+else
+    assert_eq "CRLF failure named in log" "named" "cryptic"
+fi
+rm "$FAKE_PAK/scripts/core/runtime_poll.sh"
+ln -s "$PROJECT_ROOT/src/core/runtime_poll.sh" "$FAKE_PAK/scripts/core/runtime_poll.sh"
+
 # ═══ Sprint 1.1 — Enrollment check (AC 12-26) ═══════════════════════
 
 # cd_check_enrollment probes the network before enrolling; default to

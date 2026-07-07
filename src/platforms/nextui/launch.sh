@@ -18,9 +18,15 @@
 
 cd "$(dirname "$0")" || exit 1
 
+# Build stamp: which PAK build is actually executing. Ends the "which
+# version is on the card?" ambiguity — it appears in every breadcrumb
+# line and on the problem-state screens.
+PAK_VERSION=$(cat ./version.txt 2>/dev/null)
+PAK_VERSION="${PAK_VERSION:-unknown}"
+
 # One-line breadcrumb on every launch, before anything can fail — a launch
 # that produces no visible output must never be invisible in the logs too.
-printf '%s launch.sh started\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> ./launch.log
+printf '%s launch.sh started (build %s)\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$PAK_VERSION" >> ./launch.log
 
 if [ -n "$CONTINUITY_DEBUG" ]; then
     exec 2>>./launch_debug.log
@@ -77,11 +83,23 @@ show_daemon_stop() {
 CONTINUITY_PAK_DIR="$(pwd)"
 export CONTINUITY_PAK_DIR
 
-for f in scripts/pal_nextui.sh scripts/core/pal.sh scripts/core/enrollment.sh; do
-    if [ ! -f "./$f" ]; then
-        show_simple "Continuity install corrupt: missing $f" 5
+# check_module — exists and has clean (LF) line endings. CRLF makes ash
+# parse garbage and surfaces only as a cryptic ": not found" — the exact
+# on-device failure this guard converts into a visible, named error.
+cr=$(printf '\r')
+check_module() {
+    if [ ! -f "./$1" ]; then
+        show_simple "Continuity install corrupt: missing $1" 5
         exit 1
     fi
+    if grep -q "$cr" "./$1" 2>/dev/null; then
+        show_simple "Corrupt line endings in $1 — re-copy the PAK" 6
+        exit 1
+    fi
+}
+
+for f in scripts/pal_nextui.sh scripts/core/pal.sh scripts/core/enrollment.sh; do
+    check_module "$f"
 done
 . ./scripts/pal_nextui.sh
 . ./scripts/core/pal.sh
@@ -111,13 +129,10 @@ fi
 
 if ! enroll_is_enrolled; then
     if [ -f "$SD_ROOT/setup.json" ]; then
-        # Full module set for enrollment, presence-checked first.
+        # Full module set for enrollment, presence- and CRLF-checked first.
         for f in scripts/core/path_mapper.sh scripts/core/sync_engine.sh \
                  scripts/enroll_sd_card.sh scripts/enroll_ui.sh; do
-            if [ ! -f "./$f" ]; then
-                show_simple "Continuity install corrupt: missing $f" 5
-                exit 1
-            fi
+            check_module "$f"
         done
         . ./scripts/core/path_mapper.sh
         . ./scripts/core/sync_engine.sh
@@ -146,7 +161,7 @@ if ! enroll_is_enrolled; then
         sleep 3
         show_daemon_stop
     else
-        show_simple "Not enrolled. Put setup.json on the SD card root, then relaunch." 4
+        show_simple "Not enrolled (build $PAK_VERSION). Put setup.json on SD root, relaunch." 4
     fi
 
     exit 0
@@ -171,7 +186,7 @@ if [ -n "$daemon_alive" ]; then
                      "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/^\[[^]]*\] //' | cut -c1-64)
     show_simple "${last_sync:-Daemon running — no syncs yet.}" 3
 else
-    show_simple "Daemon NOT running. Reboot to start it." 3
+    show_simple "Daemon NOT running (build $PAK_VERSION). Reboot to start it." 3
     last_err=$(grep -i "error" "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/^\[[^]]*\] //' | cut -c1-64)
     if [ -n "$last_err" ]; then
         show_simple "Last error: $last_err" 4

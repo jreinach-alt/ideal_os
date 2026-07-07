@@ -71,6 +71,7 @@ cp "$PROJECT_ROOT/src/platforms/nextui/pal_nextui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_sd_card.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_ui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT"/src/core/*.sh "$PAK/scripts/core/"
+printf '0.1.0-test\n' > "$PAK/version.txt"
 chmod +x "$PAK/launch.sh"
 
 # show2.elf stub: records argv (one call per line); daemon mode just exits
@@ -121,7 +122,9 @@ assert_contains "auto.sh has daemon hook" "$AUTO_SH" "scripts/continuity_daemon.
 assert_contains "daemon hook detaches stdio" "$AUTO_SH" "</dev/null >/dev/null 2>&1 &"
 assert_file_exists "hook marker created" "$CHOME/.hook_installed"
 assert_file_exists "breadcrumb log created" "$PAK/launch.log"
-assert_contains "not-enrolled guidance shown" "$SHOW2_CALLS" "Not enrolled. Put setup.json on the SD card root"
+assert_contains "breadcrumb carries build stamp" "$PAK/launch.log" "(build 0.1.0-test)"
+assert_contains "not-enrolled guidance shown with build stamp" "$SHOW2_CALLS" \
+    "Not enrolled (build 0.1.0-test). Put setup.json on SD root"
 
 # --- Test 2: hook install is idempotent across runs ---
 
@@ -189,8 +192,19 @@ printf '[2026-07-06 10:05:00] error: Push failed: network unreachable\n' \
     > "$CHOME/continuity.log"
 : > "$SHOW2_CALLS"
 rc=0; run_launch || rc=$?
-assert_contains "daemon-not-running shown" "$SHOW2_CALLS" "Daemon NOT running. Reboot to start it."
+assert_contains "daemon-not-running shown with build stamp" "$SHOW2_CALLS" \
+    "Daemon NOT running (build 0.1.0-test). Reboot to start it."
 assert_contains "last error surfaced" "$SHOW2_CALLS" "Push failed: network unreachable"
+
+# --- Test 7: CRLF-corrupted module is named on screen, not a silent death ---
+
+sed 's/$/\r/' "$PROJECT_ROOT/src/core/pal.sh" > "$PAK/scripts/core/pal.sh"
+: > "$SHOW2_CALLS"
+rc=0; run_launch || rc=$?
+assert_eq "corrupted module exits 1" "1" "$rc"
+assert_contains "corruption named on screen" "$SHOW2_CALLS" \
+    "Corrupt line endings in scripts/core/pal.sh — re-copy the PAK"
+cp "$PROJECT_ROOT/src/core/pal.sh" "$PAK/scripts/core/pal.sh"
 
 # --- Report ---
 printf '\n%d passed, %d failed\n' "$passed" "$failed"

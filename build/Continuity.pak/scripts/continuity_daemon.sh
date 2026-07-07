@@ -58,10 +58,19 @@ cd_remove_pid() {
 # Usage: cd_source_file <path>
 # Pre-pal_log: uses printf to stderr directly
 cd_source_file() {
-    local file
+    local file cr
     file="$1"
     if [ ! -f "$file" ]; then
         printf '[%s] error: module not found: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$file" >&2
+        cd_remove_pid
+        exit 1
+    fi
+    # CRLF line endings make ash die mid-source with a cryptic
+    # ": not found" under set -e. Name the real problem instead.
+    cr=$(printf '\r')
+    if grep -q "$cr" "$file" 2>/dev/null; then
+        printf '[%s] error: CRLF line endings in %s — PAK copy is corrupt, re-copy it\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "$file" >&2
         cd_remove_pid
         exit 1
     fi
