@@ -122,6 +122,14 @@ if [ -d "$CONTINUITY_REPO_DIR/.git" ]; then
 fi
 
 d_enroll()  { enroll_run "file://$HARNESS_ROOT/remote.git" "$DEV" "test-pat"; }
+# One daemon poll tick — the REAL cd_poll_once, including the
+# in-session divergence reconcile (sourced with NO_MAIN).
+d_tick() {
+    CONTINUITY_DAEMON_NO_MAIN=1
+    CONTINUITY_PID_FILE="$DEV_HOME/tick.pid"
+    . "$HARNESS_PROJECT_ROOT/src/platforms/nextui/continuity_daemon.sh"
+    cd_poll_once
+}
 d_cold()    { cs_run "$CONTINUITY_REPO_DIR"; }
 d_pull()    { bp_run "$CONTINUITY_REPO_DIR"; }
 d_stale()   { sb_run "$CONTINUITY_REPO_DIR"; }
@@ -234,6 +242,27 @@ assert_rc "S2: A boot pull succeeds after conflict commit" 0 "$rc"
 assert_eq "S2: A sees the same conflict" "1" "$(dev brick-a d_conflicts)"
 assert_eq "S2: A's device save untouched (canonical already A's)" \
     "A-progress-2" "$(dev brick-a d_device_file SFC/super_metroid.srm)"
+
+# ═══ S2b: in-session divergence reconcile — NO reboot involved ════════
+# Gap review 2026-07-07: a powered-on device whose push is rejected
+# used to retry blindly until reboot. Now the poll tick itself detects
+# the stranded commits and reconciles inline.
+dev brick-a d_write_save "SFC/donkey_kong.srm" "A-dk-1"
+rc=0; dev brick-a d_poll >/dev/null 2>&1 || rc=$?
+assert_rc "S2b: A pushes a new game" 0 "$rc"
+
+dev deck-b d_write_save "SFC/donkey_kong.srm" "B-dk-1"
+rc=0; dev deck-b d_tick >/dev/null 2>&1 || rc=$?
+assert_rc "S2b: B's poll tick returns 0 despite rejected push" 0 "$rc"
+
+assert_eq "S2b: canonical is A's (reconciled without reboot)" \
+    "A-dk-1" "$(remote_file snes/donkey_kong.srm)"
+assert_eq "S2b: B's version preserved as .local by the TICK" \
+    "B-dk-1" "$(remote_file "snes/donkey_kong.srm.deck-b.local")"
+assert_eq "S2b: B holds nothing unpushed after the tick" \
+    "no" "$(dev deck-b d_has_unpushed)"
+assert_eq "S2b: B device slot follows canonical" \
+    "A-dk-1" "$(dev deck-b d_device_file SFC/donkey_kong.srm)"
 
 # fence — converge both devices on the current remote head (what the
 # next real boot would do) so each scenario starts from shared state.

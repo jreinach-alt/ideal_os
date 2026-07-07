@@ -1,0 +1,54 @@
+#!/bin/sh
+# Continuity pre-push gate — the BLOCKING quality gate runs where the
+# work happens, so failures surface to whoever is pushing, immediately,
+# instead of asynchronously in a GitHub Actions run nobody is watching.
+# (Owner-requested after a red CI run had to be relayed back by hand.)
+#
+# Order: cheapest first. CRLF scan (instant) → ShellCheck error gate
+# (seconds) → full test suite (~2 min). Any failure blocks the push.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass (emergencies only, say so in the commit/PR):
+#   git push --no-verify   or   CONTINUITY_SKIP_HOOK=1 git push
+#
+# GitHub Actions CI stays as the non-blocking BACKSTOP: it runs the
+# same suite in an environment this gate cannot replicate (unprivileged
+# user, pristine checkout, its own toolchain) — that difference is
+# exactly what caught the latent root-skip test bug on CI run #1.
+set -e
+
+if [ "${CONTINUITY_SKIP_HOOK:-0}" = "1" ]; then
+    printf 'pre-push: CONTINUITY_SKIP_HOOK=1 — gate BYPASSED\n' >&2
+    exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+printf 'pre-push: CRLF scan... '
+cr=$(printf '\r')
+bad=$(git ls-files -- '*.sh' '*.json' '*.md' '*.txt' ':!:upstream/**' \
+      | while IFS= read -r f; do
+            [ -f "$f" ] && grep -l "$cr" "$f" 2>/dev/null || true
+        done)
+if [ -n "$bad" ]; then
+    printf 'FAIL\nCRLF line endings in:\n%s\n' "$bad" >&2
+    exit 1
+fi
+printf 'ok\n'
+
+printf 'pre-push: shellcheck (error gate)... '
+if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -x --severity=error \
+        src/core/*.sh src/platforms/nextui/*.sh scripts/*.sh \
+        tools/saves-repo/*.sh \
+        tests/unit/*/*.sh tests/integration/*.sh tests/fixtures/*.sh
+    printf 'ok\n'
+else
+    printf 'SKIPPED (shellcheck not installed — install it; CI will not skip)\n' >&2
+fi
+
+printf 'pre-push: full test suite...\n'
+sh scripts/test.sh
+
+printf 'pre-push: gate PASSED\n'

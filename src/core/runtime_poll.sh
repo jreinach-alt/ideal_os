@@ -207,9 +207,12 @@ rp_run() {
         push_rc=0
         se_push "$repo_dir" || push_rc=$?
         if [ "$push_rc" -eq 1 ]; then
+            # Most common cause is divergence (another device synced),
+            # which the daemon reconciles next tick — not credentials.
+            # The precise git stderr is already in the log via se_push.
             pal_log "error" "Poll: push failed"
             if command -v ss_notify >/dev/null 2>&1; then
-                ss_notify "$repo_dir" "red" "Push failed — check credentials"
+                ss_notify "$repo_dir" "red" "Push rejected — will reconcile"
             fi
             return 1
         elif [ "$push_rc" -eq 2 ]; then

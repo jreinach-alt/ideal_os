@@ -748,6 +748,23 @@ assert_rc "ch_resolve keep_newest equal returns 0" 0 "$rc"
 srm_content=$(cat "$device_b_dir/snes/super_metroid.srm")
 assert_eq "ch_resolve keep_newest equal: canonical has remote (tie)" "remote-bytes" "$srm_content"
 
+# Test: keep_newest — missing timestamp refuses to guess (gap review)
+env_out=$(setup_committed_conflict "res5b")
+device_b_dir=$(printf '%s' "$env_out" | cut -d' ' -f3)
+
+printf '{\n  "_schema_version": "1.0",\n  "file": "snes/super_metroid.srm",\n  "remote_device": "device-a",\n  "remote_timestamp": "",\n  "local_device": "device-b",\n  "local_timestamp": "2026-03-12T13:00:00Z",\n  "status": "unresolved"\n}\n' \
+    > "$device_b_dir/snes/super_metroid.srm.conflict"
+"$CONTINUITY_GIT_BIN" -C "$device_b_dir" add "snes/super_metroid.srm.conflict" >/dev/null 2>&1
+"$CONTINUITY_GIT_BIN" -C "$device_b_dir" commit -m "missing remote timestamp" >/dev/null 2>&1
+
+rc=0
+ch_resolve "$device_b_dir" "snes/super_metroid.srm" "keep_newest" 2>/dev/null || rc=$?
+assert_rc "ch_resolve keep_newest missing timestamp returns 1" 1 "$rc"
+assert_file_exists "keep_newest missing-ts: artifacts untouched (.local intact)" \
+    "$device_b_dir/snes/super_metroid.srm.device-b.local"
+assert_file_exists "keep_newest missing-ts: .conflict intact for manual resolve" \
+    "$device_b_dir/snes/super_metroid.srm.conflict"
+
 # Test: prompt — no changes (AC 40, 41)
 env_out=$(setup_committed_conflict "res6")
 device_b_dir=$(printf '%s' "$env_out" | cut -d' ' -f3)

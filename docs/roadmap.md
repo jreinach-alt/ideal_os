@@ -384,34 +384,35 @@ every roadmap platform's state payload reduces to bare libretro core
 data (RetroArch's loader accepts it as the legacy format — verified in
 source), so handoff is container transforms + metadata, no emulator
 changes. Phases S1–S3 in the doc; S1 rides with Sprint 2.0.
-**Owner decisions needed:** MuOS vs Onion in the platform list;
-auto-slot handoff default; approval of the conflict policy
-(states = last-writer-wins per slot, history as undo — unlike saves).
+**Owner decisions:** platform list = OnionOS (confirmed 2026-07-07;
+MuOS reading was wrong). Still open: auto-slot handoff default;
+conflict-policy approval (states = last-writer-wins per slot, history
+as undo — unlike saves). Cross-emulator tier: see
+`docs/design/state-transmutation.md` (R&D framework, perpetually
+experimental; repo-side compute via the Continuity Transmuter).
 
 ## Sync robustness backlog (gap review 2026-07-07)
 
 From an offline-queue/dedupe contract review; ordered by severity:
 
-1. **In-session divergence never reconciles.** A powered-on device
-   whose push is rejected (remote moved: another device synced or
-   enrolled) retries the push every 30s until REBOOT — only boot
-   dispatch runs the pull/conflict path. Long docked sessions stall
-   sync until restart. Fix direction: poll loop detects non-FF push
-   failure and runs the stale-boot reconcile inline (needs a spec —
-   it changes daemon semantics mid-session).
-2. **Misleading failure message**: runtime poll reports rejected
-   pushes as "Push failed — check credentials"; the common cause is
-   divergence, not credentials. Cheap fix, fold into (1).
-3. **`keep_newest` conflict resolution trusts device wall clocks**
-   (ISO-string compare of the two sides' timestamps). A wrong-clock
-   device silently picks the wrong side. Mitigations: preflight
-   already fails hard on year<2025; option: refuse keep_newest when
-   timestamps are implausibly close/ordered vs commit times. UI
-   default remains `prompt`, which is unaffected.
+1. ~~In-session divergence never reconciles~~ **FIXED 2026-07-07**:
+   `cd_poll_once` now detects commits that would not push while
+   online and runs the stale-boot reconcile inline, throttled
+   (`CONTINUITY_RECONCILE_COOLDOWN_TICKS`, default 10). Proven by
+   harness scenario S2b (poll ticks only — no reboot) and daemon
+   unit cases.
+2. ~~Misleading failure message~~ **FIXED 2026-07-07**: rejected
+   pushes now notify "Push rejected — will reconcile" (git's real
+   stderr was always in the log).
+3. **`keep_newest` trusts device wall clocks** — MITIGATED
+   2026-07-07: refuses to guess when either timestamp is missing
+   (falls back to manual/prompt). Residual: a plausibly-wrong clock
+   still wins ties; preflight fails hard on absurd clocks; UI default
+   remains `prompt`. Accepted for now.
 4. **Clock-set-backwards blind spot in the poll sentinel**: a save
    written while the device clock is behind the sentinel's mtime is
    invisible to `find -newer` until the next boot's full catch-up
-   scan (which always recovers it). Bounded; documented here rather
+   scan (which always recovers it). Bounded; documented rather
    than fixed — the fix (content-hash scanning every poll) costs more
    than the window is worth on SD cards.
 

@@ -288,6 +288,13 @@ cd_shutdown() {
 
 # cd_poll_once — one poll cycle. Factored out of the loop so tests can
 # drive single cycles.
+#
+# _CD_RECONCILE_COOLDOWN throttles the in-session reconcile: on a
+# PERSISTENT push failure (e.g. revoked credentials) a reconcile per
+# tick would hammer the network every 30s; one attempt per
+# CONTINUITY_RECONCILE_COOLDOWN_TICKS (default 10 ≈ 5 min) is plenty.
+_CD_RECONCILE_COOLDOWN=0
+
 cd_poll_once() {
     # A cold start deferred at boot (offline WiFi race) must be retried
     # once the network appears — otherwise the sentinel never exists and
@@ -313,6 +320,21 @@ cd_poll_once() {
 
     # Runtime poll
     rp_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "Poll cycle had errors"
+
+    # In-session divergence reconcile (gap review 2026-07-07): commits
+    # that would not push while ONLINE mean the remote moved under us
+    # (another device synced or enrolled). This used to retry blindly
+    # every tick until REBOOT — only boot dispatch ran the
+    # pull/conflict path. The stale-boot flow is idempotent and does
+    # exactly what's needed (push-first, conflict preservation, remote
+    # apply, catch-up, sentinel), so run it inline, throttled.
+    if [ "$_CD_RECONCILE_COOLDOWN" -gt 0 ]; then
+        _CD_RECONCILE_COOLDOWN=$((_CD_RECONCILE_COOLDOWN - 1))
+    elif pal_is_online && se_has_unpushed_commits "$CONTINUITY_REPO_DIR" 2>/dev/null; then
+        pal_log "info" "Push did not land while online — reconciling with remote"
+        sb_run "$CONTINUITY_REPO_DIR" || pal_log "warn" "In-session reconcile had errors"
+        _CD_RECONCILE_COOLDOWN="${CONTINUITY_RECONCILE_COOLDOWN_TICKS:-10}"
+    fi
     return 0
 }
 

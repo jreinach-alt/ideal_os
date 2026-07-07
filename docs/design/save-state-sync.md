@@ -27,7 +27,7 @@ buildable with container transforms only. No emulator changes.
 | Platform | State location | Core identity | Payload |
 |---|---|---|---|
 | **NextUI** (verified: source) | `.userdata/shared/<TAG>-<core>/<Game>.<romext>.st<0-9>` | **in dir name** (`SFC-snes9x`) | bare `core.serialize` bytes; rzip container only if RetroArch state format selected. Slot 9 = auto-resume (game switcher), slot 8 = MinUI "default state" convention, 0-7 manual. |
-| **MuOS** (docs, high confidence) | `MUOS/save/state/<CoreName>/<Game>.state<N>` | **in dir name** | RASTATE v1, rzip-wrapped when state compression on; legacy bare data possible |
+| **OnionOS** (docs, high confidence — owner-confirmed target, replacing the earlier MuOS reading) | `Saves/CurrentProfile/states/<CoreName>/<Game>.state<N>` | **in dir name** | RASTATE v1, rzip-wrapped when state compression on; legacy bare data possible (RetroArch-based, same family as MuOS) |
 | **RetroDeck** (docs, medium) | `~/retrodeck/states/<system>/<Game>.state<N>` | **NOT in path** — system dir only; core must be resolved from the system's configured default core (per-game overrides exist) | RASTATE v1 (± rzip) |
 | **Android / RetroArch (Ayn Thor)** (docs, medium) | `RetroArch/states/` FLAT by default (sort-by-core optional, user setting) | **NOT in path** by default | RASTATE v1 (± rzip) |
 
@@ -92,7 +92,7 @@ A state materializes onto a device only when ALL hold:
    that system. Device core inventory joins the existing device
    registration (`.continuity/devices/<name>.json` gains a `cores`
    map, refreshed by the daemon — the PAL provides platform-specific
-   discovery: NextUI/MuOS from dirs, RetroDeck from config, Android
+   discovery: NextUI/Onion from dirs, RetroDeck from config, Android
    from client).
 2. **Core version policy**: `exact` (default until proven) → versions
    equal or both unknown; `lenient` opt-in → same core name only.
@@ -131,16 +131,17 @@ unchanged.
   Hardware-validate the full quicksave → cloud → restore loop on one
   device before any cross-device promises.
 - **Phase S3 — cross-device handoff**: second platform (whichever
-  lands first: MuOS or RetroDeck) materializes Brick states and vice
+  lands first: OnionOS or RetroDeck) materializes Brick states and vice
   versa. The Brick↔Thor snes9x handoff is the acceptance test.
 - Ordering: S1 rides with Sprint 2.0 canonicalization (shared basename
   rules); S2/S3 follow the second-platform PAL.
 
 ## Open questions for the owner
 
-1. **MuOS vs Onion**: the roadmap says Onion OS; this request says
-   MuOS. MuOS is RetroArch-based and fits this design directly.
-   Replace Onion, or carry both?
+1. ~~MuOS vs Onion~~ **RESOLVED (owner, 2026-07-07): OnionOS** is
+   the Anbernic target. Onion is RetroArch-based
+   (`Saves/CurrentProfile/states/<CoreName>/`), so the design applies
+   unchanged.
 2. Auto-slot handoff default: materialize the `auto` slot on boot
    pull (a device you pick up resumes the other device's session), or
    behind a per-device opt-in? Proposal: opt-in until S2 is

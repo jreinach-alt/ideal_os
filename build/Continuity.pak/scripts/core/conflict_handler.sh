@@ -307,10 +307,18 @@ ch_resolve() {
             ;;
 
         keep_newest)
-            # Compare timestamps from .conflict metadata
+            # Compare timestamps from .conflict metadata.
+            # These are DEVICE WALL CLOCKS (gap review 2026-07-07): a
+            # wrong-clock device would silently pick the wrong side, so
+            # refuse to guess when either side is missing — the caller
+            # falls back to prompt/manual resolution.
             local remote_ts local_ts
             remote_ts=$(grep '"remote_timestamp"' "$conflict_meta" | sed 's/.*: *"\([^"]*\)".*/\1/')
             local_ts=$(grep '"local_timestamp"' "$conflict_meta" | sed 's/.*: *"\([^"]*\)".*/\1/')
+            if [ -z "$remote_ts" ] || [ -z "$local_ts" ]; then
+                pal_log "error" "ch_resolve: keep_newest needs both timestamps for $repo_path — resolve manually"
+                return 1
+            fi
             if [ "$local_ts" \> "$remote_ts" ]; then
                 ch_resolve "$repo_dir" "$repo_path" "keep_local"
             else

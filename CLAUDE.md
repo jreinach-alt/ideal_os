@@ -257,6 +257,15 @@ NextUI platform work.**
    on-screen with the build stamp; the preflight report goes to
    `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb
    or diagnostics behind env vars nothing on-device sets.
+6. **Quality gates:** the BLOCKING gate is the local pre-push hook
+   (`.githooks/pre-push`: CRLF + shellcheck + full suite — enabled by
+   Startup Step 2; bypass only in an emergency and say so). GitHub
+   Actions CI remains the non-blocking BACKSTOP (unprivileged user,
+   pristine environment — differences that have caught real bugs).
+   **Follow-through rule:** a session that pushes does not end its
+   turn with that push's CI run unchecked — verify it completed, and
+   fix or report a failure yourself; never leave a red run for the
+   owner to discover.
 
 ## Model Regimen
 
@@ -284,6 +293,7 @@ Read this file.
 busybox ash -c 'echo ok' 2>/dev/null || apt-get install -y busybox-static
 command -v shellcheck >/dev/null 2>&1 || apt-get install -y shellcheck
 command -v git >/dev/null 2>&1 || apt-get install -y git
+git config core.hooksPath .githooks   # the blocking pre-push gate
 ```
 
 ### Step 3 — Read the roadmap

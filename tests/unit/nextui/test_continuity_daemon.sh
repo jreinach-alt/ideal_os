@@ -348,6 +348,44 @@ cd_poll_once
 assert_file_exists "runtime poll runs with sentinel" "$TEST_TMPDIR/poll_rp_run"
 assert_file_not_exists "no cold start once sentinel exists" "$TEST_TMPDIR/poll_cs_run"
 
+# ═══ Poll cycle — in-session divergence reconcile (gap review) ══════
+
+sb_run() { touch "$TEST_TMPDIR/poll_sb_run"; }
+
+# Unpushed commits survive the poll while ONLINE → reconcile runs
+se_has_unpushed_commits() { return 0; }
+_CD_RECONCILE_COOLDOWN=0
+rm -f "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once
+assert_file_exists "reconcile: online+unpushed triggers sb_run" "$TEST_TMPDIR/poll_sb_run"
+
+# Cooldown counts down — next tick must NOT reconcile again
+rm -f "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once
+assert_file_not_exists "reconcile: throttled by cooldown" "$TEST_TMPDIR/poll_sb_run"
+
+# Cooldown expiry re-arms (tick it down to zero, then once more)
+_CD_RECONCILE_COOLDOWN=1
+rm -f "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once   # decrements 1 -> 0, no reconcile this tick
+assert_file_not_exists "reconcile: last cooldown tick still throttled" "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once   # cooldown 0 -> reconcile again
+assert_file_exists "reconcile: re-arms after cooldown expiry" "$TEST_TMPDIR/poll_sb_run"
+
+# Offline → never reconcile (commits queue as designed)
+pal_is_online() { return 1; }
+_CD_RECONCILE_COOLDOWN=0
+rm -f "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once
+assert_file_not_exists "reconcile: offline never triggers" "$TEST_TMPDIR/poll_sb_run"
+
+# Nothing unpushed → never reconcile
+pal_is_online() { return 0; }
+se_has_unpushed_commits() { return 1; }
+rm -f "$TEST_TMPDIR/poll_sb_run"
+cd_poll_once
+assert_file_not_exists "reconcile: clean state never triggers" "$TEST_TMPDIR/poll_sb_run"
+
 # ═══ Sprint 1.3 — Shutdown marker logic ═════════════════════════════
 
 CONTINUITY_REPO_DIR="$REPO"
