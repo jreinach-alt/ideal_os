@@ -245,10 +245,14 @@ NextUI platform work.**
    from the verified tree. Never instruct anyone to copy from a git
    working tree (line-ending smudge history; see field notes).
 4. **After first enrollment, prefer OTA** (`scripts/update.sh`, tap-driven
-   on-device): push to the channel branch, the device pulls it. Card
-   swaps are for a broken launch/update bootstrap and for binaries that
-   are NOT fail-open (git). The vendored busybox is explicitly OTA-safe:
-   a torn copy fails the daemon's self-test and falls back to device sh.
+   on-device). Releases are CHANNELS (stable/nightly) pinned in
+   `release/channels.json` on main — never branches. Publish/promote/
+   rollback via `scripts/publish_channel.sh` (takes effect when the
+   manifest commit is reachable from origin/main); contract in
+   `release/README.md`. Card swaps are for a broken launch/update
+   bootstrap and for binaries that are NOT fail-open (git). The
+   vendored busybox is explicitly OTA-safe: a torn copy fails the
+   daemon's self-test and falls back to device sh.
 5. **Observability is a requirement:** every failure must name itself
    on-screen with the build stamp; the preflight report goes to
    `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb

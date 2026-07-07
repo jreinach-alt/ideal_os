@@ -110,15 +110,31 @@ guarantees worth trusting. `sync` after every important write.
 - On-screen: every failure names itself + build stamp; X/Y replays the
   log during enrollment; B cancels (setup.json is preserved for retry).
 
-## OTA (Sprint 1.6)
+## OTA (Sprint 1.6, channels reworked in 1.8)
 
 - `scripts/update.sh`: persistent sparse clone (`--filter=blob:none`,
   fallback plain shallow) of the public project repo at
   `.continuity/ota-repo`, sparse path `build/Continuity.pak` — an update
-  is "sync the tracked PAK folder". Channel = `ota_channel.txt` (written
-  by build from the source branch). Verify fetched tree (CRLF +
+  is "sync the tracked PAK folder". Verify fetched tree (CRLF +
   checksums) before staged copy; binaries only rewritten when size
   differs; commit recorded in `.continuity/.ota_commit`.
+- **Channels are data on main, not branches** (the original
+  channel-follows-build-branch design died the moment its branch did —
+  owner-caught at PR time). The device's durable channel name
+  (stable/nightly) lives in `.continuity/ota_channel` — seeded once
+  from the build's `ota_channel.txt`, never overwritten by installs.
+  Each check fetches main, reads `release/channels.json` via `git
+  show` (no checkout), and fetches the channel's PINNED commit
+  (GitHub serves reachable SHAs; file:// test remotes need
+  `uploadpack.allowAnySHA1InWant`). Unpublished commits on main are
+  invisible to devices. Publish/promote/rollback =
+  `scripts/publish_channel.sh` manifest commits; the manifest must be
+  reachable from origin/main to take effect.
+- **Legacy fallback (migration)**: manifest unreachable or channel
+  missing → the channel value is treated as a branch name and the old
+  fetch-a-branch flow runs. Pre-manifest devices self-migrate: their
+  old branch serves them the new updater once, which then reads the
+  manifest. Remove in Phase 2.
 - UI: on pak tap when enrolled — "Update available: X installs, B skips".
   Changes take effect next boot. `CONTINUITY_OTA=0` kill switch.
 - **Card swaps remain necessary only for**: a broken update.sh/launch.sh

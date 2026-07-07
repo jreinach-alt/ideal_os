@@ -11,8 +11,21 @@
 #     sparse-checked-out to just build/Continuity.pak (with a partial
 #     clone filter when the server supports it), so update checks and
 #     downloads are incremental — unchanged binaries are never refetched.
-#   - The update channel (branch) is read from ota_channel.txt in the
-#     PAK, written at build time from the branch the build came from.
+#   - CHANNELS ARE DATA ON MAIN, NOT BRANCHES: the device holds a
+#     durable channel name (stable/nightly) in
+#     $CONTINUITY_HOME/ota_channel (seeded once from the build's
+#     ota_channel.txt, never overwritten by installs). Each check
+#     fetches main, reads release/channels.json (git show — no
+#     checkout), and fetches the channel's pinned commit for the PAK
+#     tree. Publishing/promotion/rollback are manifest commits on main
+#     (scripts/publish_channel.sh), so releases survive feature-branch
+#     deletion, PR merges, and session handoffs by construction.
+#   - LEGACY FALLBACK (migration): when the manifest is unreachable or
+#     lacks the channel, the channel value is treated as a branch name
+#     and the old fetch-a-branch flow runs. Devices deployed before
+#     the manifest existed migrate themselves: their old branch serves
+#     them this updater, which then finds the manifest on main.
+#     Removable in Phase 2.
 #   - Apply is staged: fetch → verify the fetched tree (CRLF scan +
 #     checksums.txt) → copy over the live PAK → sync. The daemon reads
 #     its scripts at boot, so replacing files mid-run takes effect on
@@ -20,7 +33,8 @@
 #
 # Functions are ota_-prefixed and individually testable; overridables:
 #   CONTINUITY_OTA_URL     — repo URL (default: the public project repo)
-#   CONTINUITY_OTA_BRANCH  — channel override (default: ota_channel.txt)
+#   CONTINUITY_OTA_BRANCH  — channel override (default: device file,
+#                            then the build's ota_channel.txt)
 #   CONTINUITY_HOME        — state root (default: /mnt/SDCARD/.continuity)
 
 OTA_PAK_DIR="${CONTINUITY_PAK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -34,15 +48,34 @@ ota_log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$OTA_LOG" 2>/dev/null
 }
 
-# ota_channel — the branch this build tracks
+# ota_channel — the device's durable channel identity.
+# Precedence: env override → device-side file → build seed → stable.
+# The device file is written ONCE (seeded from the build that first
+# runs this code) and only changed deliberately via ota_set_channel —
+# installing a build from another channel must not move the device.
 ota_channel() {
     if [ -n "$CONTINUITY_OTA_BRANCH" ]; then
         printf '%s\n' "$CONTINUITY_OTA_BRANCH"
-    elif [ -s "$OTA_PAK_DIR/ota_channel.txt" ]; then
-        cat "$OTA_PAK_DIR/ota_channel.txt"
-    else
-        printf 'main\n'
+        return 0
     fi
+    if [ ! -s "$OTA_HOME/ota_channel" ] && [ -s "$OTA_PAK_DIR/ota_channel.txt" ]; then
+        mkdir -p "$OTA_HOME"
+        cp "$OTA_PAK_DIR/ota_channel.txt" "$OTA_HOME/ota_channel" 2>/dev/null || true
+    fi
+    if [ -s "$OTA_HOME/ota_channel" ]; then
+        cat "$OTA_HOME/ota_channel"
+    else
+        printf 'stable\n'
+    fi
+}
+
+# ota_set_channel — deliberately switch this device's channel
+ota_set_channel() {
+    [ -n "$1" ] || return 1
+    mkdir -p "$OTA_HOME"
+    printf '%s\n' "$1" > "$OTA_HOME/ota_channel"
+    ota_log "Channel set to $1"
+    return 0
 }
 
 # ota_git — run the bundled git with hang-proof transport settings
@@ -52,17 +85,18 @@ ota_git() {
 }
 
 # ota_ensure_repo — create or reuse the persistent sparse OTA clone.
+# Cloned from the remote's default branch — the channel is NOT a branch
+# and every check fetches explicit refs anyway. Pre-manifest device
+# clones (made with --branch <devbranch>) keep working unchanged.
 # Returns: 0 ready, 1 failure (logged)
 ota_ensure_repo() {
-    local branch
-    branch=$(ota_channel)
     mkdir -p "$OTA_HOME"
 
     if [ -d "$OTA_REPO/.git" ]; then
         return 0
     fi
 
-    ota_log "Setting up OTA clone (channel: $branch)"
+    ota_log "Setting up OTA clone"
     rm -rf "$OTA_REPO"
     mkdir -p "$OTA_REPO"
 
@@ -70,11 +104,11 @@ ota_ensure_repo() {
     # fetched at checkout). Some servers (and file:// test remotes without
     # uploadpack.allowFilter) reject filters — fall back to a plain
     # shallow clone.
-    if ! ota_git clone --depth 1 --branch "$branch" --no-checkout \
+    if ! ota_git clone --depth 1 --no-checkout \
             --filter=blob:none "$OTA_URL" "$OTA_REPO" >>"$OTA_LOG" 2>&1; then
         ota_log "Filtered clone refused — falling back to plain shallow clone"
         rm -rf "$OTA_REPO"
-        if ! ota_git clone --depth 1 --branch "$branch" --no-checkout \
+        if ! ota_git clone --depth 1 --no-checkout \
                 "$OTA_URL" "$OTA_REPO" >>"$OTA_LOG" 2>&1; then
             ota_log "ERROR: OTA clone failed"
             rm -rf "$OTA_REPO"
@@ -90,21 +124,14 @@ ota_ensure_repo() {
     return 0
 }
 
-# ota_check — fetch the channel head; print "<new_version> <commit>" and
-# return 0 when an update is available, 1 when up to date / unavailable.
-ota_check() {
-    local branch head cur_commit new_version
-    branch=$(ota_channel)
-
-    ota_ensure_repo || return 1
-
-    if ! ota_git -C "$OTA_REPO" fetch --depth 1 origin "$branch" >>"$OTA_LOG" 2>&1; then
-        ota_log "ERROR: OTA fetch failed"
-        return 1
-    fi
-
-    head=$(ota_git -C "$OTA_REPO" rev-parse FETCH_HEAD 2>>"$OTA_LOG")
-    [ -n "$head" ] || return 1
+# _ota_finish_check — shared tail of both check modes: dedupe against
+# the current commit, version-parity adoption, materialize, report.
+# Usage: _ota_finish_check <target_commit> [expected_version]
+# Returns: 0 update available (prints "<version> <commit>"), 1 otherwise.
+_ota_finish_check() {
+    local head expect cur_commit new_version
+    head="$1"
+    expect="${2:-}"
 
     cur_commit=$(cat "$OTA_HOME/.ota_commit" 2>/dev/null)
     if [ "$head" = "$cur_commit" ]; then
@@ -112,16 +139,41 @@ ota_check() {
         return 1
     fi
 
-    # Materialize the fetched tree to read its version stamp
-    ota_git -C "$OTA_REPO" checkout -f "$head" >>"$OTA_LOG" 2>&1 || return 1
+    # Version parity: a card-swapped deploy never wrote .ota_commit, so
+    # commit comparison alone re-offers the build the user already has.
+    # The manifest carries the version, so parity is decided BEFORE any
+    # further fetch. (Field-found by the user.)
+    if [ -n "$expect" ] && \
+       [ "$expect" = "$(cat "$OTA_PAK_DIR/version.txt" 2>/dev/null)" ]; then
+        printf '%s\n' "$head" > "$OTA_HOME/.ota_commit"
+        ota_log "Deployed build $expect already matches $head — adopting"
+        return 1
+    fi
+
+    # Materialize the target tree (fetch the pinned commit if the local
+    # object store doesn't have it yet — GitHub serves reachable SHAs).
+    if ! ota_git -C "$OTA_REPO" checkout -f "$head" >>"$OTA_LOG" 2>&1; then
+        if ! ota_git -C "$OTA_REPO" fetch --depth 1 origin "$head" >>"$OTA_LOG" 2>&1; then
+            ota_log "ERROR: cannot fetch pinned commit $head"
+            return 1
+        fi
+        ota_git -C "$OTA_REPO" checkout -f "$head" >>"$OTA_LOG" 2>&1 || return 1
+    fi
+
     new_version=$(cat "$OTA_REPO/build/Continuity.pak/version.txt" 2>/dev/null)
     new_version="${new_version:-unknown}"
 
-    # Version parity: a card-swapped deploy never wrote .ota_commit, so
-    # commit comparison alone re-offers the build the user already has.
-    # If the PAK's own version matches the fetched one, adopt the commit
-    # as current and report up to date. (Field-found by the user.)
-    if [ "$new_version" = "$(cat "$OTA_PAK_DIR/version.txt" 2>/dev/null)" ]; then
+    # Manifest integrity: the pinned tree must be the version the
+    # manifest promised — a mismatch means a broken publish; hold.
+    if [ -n "$expect" ] && [ "$new_version" != "$expect" ]; then
+        ota_log "ERROR: manifest promises $expect but $head carries $new_version — holding"
+        return 1
+    fi
+
+    # Legacy mode fetches a moving branch, so parity is re-checked
+    # against the materialized tree.
+    if [ -z "$expect" ] && \
+       [ "$new_version" = "$(cat "$OTA_PAK_DIR/version.txt" 2>/dev/null)" ]; then
         printf '%s\n' "$head" > "$OTA_HOME/.ota_commit"
         ota_log "Deployed build $new_version already matches $head — adopting"
         return 1
@@ -130,6 +182,52 @@ ota_check() {
     ota_log "Update available: $new_version ($head)"
     printf '%s %s\n' "$new_version" "$head"
     return 0
+}
+
+# ota_check — resolve the device's channel and print
+# "<new_version> <commit>", returning 0 when an update is available,
+# 1 when up to date / unavailable.
+#
+# Manifest mode: fetch main, read release/channels.json via git show
+# (no checkout), follow the channel's pinned commit. Legacy mode (when
+# the manifest is unreachable or lacks the channel): treat the channel
+# value as a branch name and follow its head — the migration path for
+# pre-manifest devices.
+ota_check() {
+    local channel manifest entry m_commit m_version
+    channel=$(ota_channel)
+
+    ota_ensure_repo || return 1
+
+    manifest=""
+    if ota_git -C "$OTA_REPO" fetch --depth 1 origin main >>"$OTA_LOG" 2>&1; then
+        manifest=$(ota_git -C "$OTA_REPO" show FETCH_HEAD:release/channels.json 2>>"$OTA_LOG") || manifest=""
+    fi
+
+    if [ -n "$manifest" ]; then
+        entry=$(printf '%s\n' "$manifest" | sed -n \
+            's/.*"'"$channel"'": *{ *"commit": *"\([0-9a-f]\{40\}\)", *"version": *"\([^"]*\)".*/\1 \2/p' | head -1)
+        if [ -n "$entry" ]; then
+            m_commit="${entry%% *}"
+            m_version="${entry#* }"
+            _ota_finish_check "$m_commit" "$m_version"
+            return $?
+        fi
+        ota_log "Channel '$channel' not in manifest — trying legacy branch mode"
+    else
+        ota_log "Release manifest unavailable — trying legacy branch mode (channel: $channel)"
+    fi
+
+    # Legacy: channel value doubles as a branch name.
+    if ! ota_git -C "$OTA_REPO" fetch --depth 1 origin "$channel" >>"$OTA_LOG" 2>&1; then
+        ota_log "ERROR: OTA fetch failed (no manifest entry and no branch '$channel')"
+        return 1
+    fi
+    local head
+    head=$(ota_git -C "$OTA_REPO" rev-parse FETCH_HEAD 2>>"$OTA_LOG")
+    [ -n "$head" ] || return 1
+    _ota_finish_check "$head"
+    return $?
 }
 
 # ota_verify_tree — sanity-check a fetched PAK tree before applying.
