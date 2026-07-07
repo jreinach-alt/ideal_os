@@ -80,7 +80,7 @@ chmod +x "$PAK/launch.sh"
 # exec path is pre-set below so the PAL's PAK-relative defaults don't
 # hijack it), and the TLS probe points at the local bare remote.
 mkdir -p "$PAK/libexec/git-core" "$PAK/share/templates"
-printf 'stub\n' > "$PAK/libexec/git-core/git-remote-https"
+printf '#!/bin/sh\nexit 129\n' > "$PAK/libexec/git-core/git-remote-https"
 chmod +x "$PAK/libexec/git-core/git-remote-https"
 printf 'stub-ca\n' > "$PAK/share/ca-bundle.crt"
 SYS_GIT_EXEC_PATH="$(git --exec-path)"

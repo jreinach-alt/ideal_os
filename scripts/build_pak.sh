@@ -103,7 +103,22 @@ cp "$CONFIG_DIR/platform_maps/nextui.json" "$PAK_DIR/config/platform_maps/"
 cp "$CONFIG_DIR/system_taxonomy.json" "$PAK_DIR/config/"
 
 # Version file
-printf '%s\n' "0.1.0-$(date '+%Y%m%d')" > "$PAK_DIR/version.txt"
+# Minute-granular stamp: same-day rebuilds must be distinguishable on
+# the device screen, or "which build ran?" costs an SD-card round-trip.
+printf '%s\n' "0.1.0-$(date '+%Y%m%d-%H%M')" > "$PAK_DIR/version.txt"
+
+# Checksums for the binaries: the preflight doctor verifies these on the
+# device, so a truncated/corrupted SD-card copy names itself on screen
+# instead of surfacing as git's misleading "unable to find remote helper".
+# Format: <sha256> <bytes> <pak-relative-path>
+: > "$PAK_DIR/checksums.txt"
+for f in bin/git libexec/git-core/git-remote-https \
+         libexec/git-core/git-remote-http share/ca-bundle.crt; do
+    printf '%s %s %s\n' \
+        "$(sha256sum "$PAK_DIR/$f" | cut -d' ' -f1)" \
+        "$(wc -c < "$PAK_DIR/$f")" \
+        "$f" >> "$PAK_DIR/checksums.txt"
+done
 
 # ── Permissions ──────────────────────────────────────────────────────
 

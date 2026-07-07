@@ -53,9 +53,21 @@ mkdir -p "$PAK/scripts/core" "$PAK/libexec/git-core" "$PAK/share" "$SDROOT"
 printf '0.1.0-test\n' > "$PAK/version.txt"
 printf '#!/bin/sh\ntrue\n' > "$PAK/launch.sh"
 printf '#!/bin/sh\ntrue\n' > "$PAK/scripts/core/pal.sh"
-printf 'fake helper\n' > "$PAK/libexec/git-core/git-remote-https"
+printf '#!/bin/sh\nexit 129\n' > "$PAK/libexec/git-core/git-remote-https"
 chmod +x "$PAK/libexec/git-core/git-remote-https"
 printf 'fake ca\n' > "$PAK/share/ca-bundle.crt"
+
+# Matching checksums manifest (same format as build_pak.sh writes)
+write_checksums() {
+    : > "$PAK/checksums.txt"
+    for f in libexec/git-core/git-remote-https share/ca-bundle.crt; do
+        printf '%s %s %s\n' \
+            "$(sha256sum "$PAK/$f" | cut -d' ' -f1)" \
+            "$(wc -c < "$PAK/$f")" \
+            "$f" >> "$PAK/checksums.txt"
+    done
+}
+write_checksums
 
 # git stub: FAKE_LSREMOTE_FAIL makes ls-remote fail like a TLS error
 GIT_STUB="$TEST_TMPDIR/git"
@@ -94,7 +106,8 @@ rc=0; pf_run "$R1" || rc=$?
 assert_eq "healthy environment passes" "0" "$rc"
 assert_contains "clock ok" "$R1" "ok   clock"
 assert_contains "git binary version captured" "$R1" "git version 2.47.1"
-assert_contains "https helper found" "$R1" "ok   https-helper"
+assert_contains "https helper executes" "$R1" "https-helper   executes"
+assert_contains "binaries verified" "$R1" "all shipped binaries intact"
 assert_contains "ca bundle found" "$R1" "ok   ca-bundle"
 assert_contains "live TLS probe ran" "$R1" "unauthenticated ls-remote succeeded"
 assert_contains "verdict is PASSED" "$R1" "=== preflight PASSED ==="
@@ -146,6 +159,26 @@ rc=0; pf_run "$R8" || rc=$?
 assert_eq "missing js0 does not fail preflight" "0" "$rc"
 assert_contains "js0 warning recorded" "$R8" "warn buttons"
 : > "$EUI_JS_DEV"
+
+# --- Test 9a: helper present but not executable by the kernel is fatal ---
+printf 'not an executable\n' > "$PAK/libexec/git-core/git-remote-https"
+chmod +x "$PAK/libexec/git-core/git-remote-https"
+write_checksums
+rc=0; pf_run "$TEST_TMPDIR/r9a.txt" || rc=$?
+assert_eq "non-executing helper fails" "1" "$rc"
+assert_contains "exec failure named" "$TEST_TMPDIR/r9a.txt" "present but will not execute"
+printf '#!/bin/sh\nexit 129\n' > "$PAK/libexec/git-core/git-remote-https"
+chmod +x "$PAK/libexec/git-core/git-remote-https"
+write_checksums
+
+# --- Test 9b: truncated binary caught by checksum verification ---
+printf 'truncated' > "$PAK/share/ca-bundle.crt"   # size differs from manifest
+rc=0; pf_run "$TEST_TMPDIR/r9b.txt" || rc=$?
+assert_eq "corrupt copy fails" "1" "$rc"
+assert_contains "corruption named with re-copy guidance" "$TEST_TMPDIR/r9b.txt" \
+    "corrupt on card: share/ca-bundle.crt"
+printf 'fake ca\n' > "$PAK/share/ca-bundle.crt"
+write_checksums
 
 # --- Test 9: unparseable setup.json is fatal ---
 printf '{ "garbage": true }\n' > "$SDROOT/setup.json"

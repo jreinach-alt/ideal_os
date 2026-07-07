@@ -86,10 +86,26 @@ pf_check_git_binary() {
 }
 
 pf_check_https_helper() {
-    if [ -x "$CONTINUITY_PAK_DIR/libexec/git-core/git-remote-https" ]; then
-        pf_emit "ok" "https-helper" "libexec/git-core/git-remote-https"
+    # Record the env wiring too — a present helper that git can't FIND
+    # (GIT_EXEC_PATH unset) looks identical to a missing one at git level.
+    pf_emit "info" "git-env" "GIT_EXEC_PATH=${GIT_EXEC_PATH:-unset} GIT_SSL_CAINFO=${GIT_SSL_CAINFO:-unset}"
+    local helper out rc
+    helper="$CONTINUITY_PAK_DIR/libexec/git-core/git-remote-https"
+    if [ ! -x "$helper" ]; then
+        pf_emit "FAIL" "https-helper" "git-remote-https missing — git cannot speak https (deployed the old 2 MB zip? the fixed one is ~9 MB with a libexec folder)"
+        return 0
+    fi
+    # Present is not enough: actually execute it. A binary the kernel
+    # refuses to run (rc 126/127) looks identical to a missing one from
+    # git's side — capture the real reason here instead. (rc must be
+    # taken from the helper itself, not from a downstream pipeline.)
+    out=$("$helper" </dev/null 2>&1)
+    rc=$?
+    out=$(printf '%s' "$out" | head -1)
+    if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
+        pf_emit "FAIL" "https-helper" "present but will not execute (rc=$rc): ${out:-no output}"
     else
-        pf_emit "FAIL" "https-helper" "git-remote-https missing — git cannot speak https"
+        pf_emit "ok" "https-helper" "executes (rc=$rc)"
     fi
 }
 
@@ -110,11 +126,48 @@ pf_check_network() {
     return 1
 }
 
+# pf_check_binaries — verify shipped binaries against build-time
+# checksums. A truncated SD-card copy passes -x but fails the kernel's
+# exec with an error git masks as "unable to find remote helper".
+pf_check_binaries() {
+    local sums line sum size path actual_size actual_sum bad
+    sums="$CONTINUITY_PAK_DIR/checksums.txt"
+    if [ ! -f "$sums" ]; then
+        pf_emit "info" "checksums" "checksums.txt absent — skipping"
+        return 0
+    fi
+    bad=""
+    while IFS=' ' read -r sum size path; do
+        [ -n "$path" ] || continue
+        actual_size=$(cat "$CONTINUITY_PAK_DIR/$path" 2>/dev/null | wc -c)
+        if [ "$actual_size" != "$size" ]; then
+            bad="$path (size $actual_size, expected $size)"
+            break
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+            actual_sum=$(sha256sum "$CONTINUITY_PAK_DIR/$path" 2>/dev/null | cut -d' ' -f1)
+            if [ "$actual_sum" != "$sum" ]; then
+                bad="$path (checksum mismatch)"
+                break
+            fi
+        fi
+    done < "$sums"
+    if [ -n "$bad" ]; then
+        pf_emit "FAIL" "checksums" "corrupt on card: $bad — re-copy the PAK and EJECT the card properly"
+    else
+        pf_emit "ok" "checksums" "all shipped binaries intact"
+    fi
+}
+
 # Real end-to-end probe: DNS + TCP + TLS + CA + clock + https helper in
 # one shot, no credentials involved. Only meaningful if network is up.
+# GIT_EXEC_PATH/GIT_SSL_CAINFO are re-defaulted inline as a belt against
+# any failure of the PAL's export wiring.
 pf_check_github_tls() {
     local out
     out=$(GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=20 \
+          GIT_EXEC_PATH="${GIT_EXEC_PATH:-$CONTINUITY_PAK_DIR/libexec/git-core}" \
+          GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$CONTINUITY_PAK_DIR/share/ca-bundle.crt}" \
           "$CONTINUITY_GIT_BIN" ls-remote "$PF_LSREMOTE_URL" HEAD 2>&1 | head -2)
     case "$out" in
         *[0-9a-f]*HEAD*)
@@ -178,6 +231,7 @@ pf_run() {
     pf_check_modules
     pf_check_git_binary
     pf_check_https_helper
+    pf_check_binaries
     pf_check_ca_bundle
     if pf_check_network; then
         pf_check_github_tls

@@ -54,6 +54,18 @@ esd_import() {
     GIT_HTTP_LOW_SPEED_TIME=30
     export GIT_TERMINAL_PROMPT GIT_HTTP_LOW_SPEED_LIMIT GIT_HTTP_LOW_SPEED_TIME
 
+    # Belt against PAL wiring failures: the bundled git's helper and CA
+    # paths are baked to the build container; re-default them here so
+    # every enrollment git call can find its https machinery.
+    if [ -d "$CONTINUITY_PAK_DIR/libexec/git-core" ]; then
+        GIT_EXEC_PATH="${GIT_EXEC_PATH:-$CONTINUITY_PAK_DIR/libexec/git-core}"
+        export GIT_EXEC_PATH
+    fi
+    if [ -f "$CONTINUITY_PAK_DIR/share/ca-bundle.crt" ]; then
+        GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$CONTINUITY_PAK_DIR/share/ca-bundle.crt}"
+        export GIT_SSL_CAINFO
+    fi
+
     # Step 1: Detect setup file
     if ! esd_detect_setup_file; then
         return 0
