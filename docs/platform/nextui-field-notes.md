@@ -125,6 +125,17 @@ guarantees worth trusting. `sync` after every important write.
   chain (bootstrap), and binary-toolchain changes too risky to trust to
   a partial copy.
 
+## SRAM flush timing (why "save and keep playing" syncs nothing)
+
+`minarch` writes the `.srm` file ONLY at: game exit (`Core_quit`,
+minarch.c:6146), device sleep (`Menu_beforeSleep`, :6269), and MENU-button
+press (:8492). **There is no periodic in-game SRAM flush** — an in-game
+save updates emulated memory only. The sync story for users is therefore:
+"your save reaches the cloud when you take a break" (open the menu, sleep
+the device, or quit the game); the daemon's 30s poll picks the file up
+from there. Any smoke test must include a MENU press or game exit between
+saving and expecting a commit.
+
 ## Security notes
 
 - PAT: fine-grained, ONE repo (the saves repo), Contents read/write
