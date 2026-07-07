@@ -241,6 +241,33 @@ just the current run's copy flag) so files stranded by earlier runs get
 committed. ANY new git-output parsing MUST use -z or quotepath-immune
 plumbing and be tested with `Name (USA).ext` and apostrophe filenames.
 
+## Real-repo byte sweep (first device's actual files, 2026-07-07)
+
+`continuity-rzip detect` + round-trip run against every file the Brick
+actually pushed (the live saves repo, not fixtures):
+
+- `snes/….sfc.sav` — 8,192 bytes, leading zeros, raw SRAM (ALttP's
+  exact SRAM size). detect: `raw`. ✓
+- `states/SFC-snes9x/….sfc.st0` / `.st9` — 823,407 bytes each
+  (same size, different bytes — two distinct snapshots), magic
+  **`#!s9xsnp`**: that is **snes9x's NATIVE snapshot serialization**,
+  written raw (default `STATE_FORMAT_SAV` → `filestream_write_file`,
+  upstream-verified). **It is NOT an RZIP container**, despite being a
+  `#`-prefixed magic that reads like a sibling of `#RZIPv\x01#` — easy
+  and reasonable to misread from a hex view. detect: `raw`. ✓
+- Codec round-trips the real payloads byte-identically (8 KB SRAM →
+  153 B; 823 KB state → 88.8 KB) — real states compress ~9:1, relevant
+  when Phase 3 considers transfer-size options.
+- MinUI naming embeds the ROM extension in BOTH classes (`.sfc.sav`,
+  `.sfc.st0`) — direct on-repo confirmation of the canonicalization
+  spec's basename rules, and real snes9x states (~800 KB) sit well
+  under the 8 MB state cap.
+
+Standing lesson: claims about the user's data get tested against the
+user's data — the sweep exists because a source-derived "your repo has
+no compressed files" answer (which happened to be right) was rightly
+challenged as untested.
+
 ## Two-device concurrency (harness-proven, 2026-07-07)
 
 `tests/integration/test_two_device_conflict.sh` drives two fully
