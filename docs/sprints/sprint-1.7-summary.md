@@ -52,6 +52,28 @@
 Suite: 30 files, 0 failures. `scripts/validate_busybox.sh` 69/69
 against the shipped `build/Continuity.pak/bin/busybox`.
 
+## Defects Found and Fixed (CI bring-up, same session)
+
+The first CI run in the repo's history (the new
+`.github/workflows/ci.yml`) surfaced three environment assumptions
+that always-root, absolute-path local sessions never exercised:
+
+1. `validate_busybox.sh` broke when given a relative binary path (the
+   matrix `cd`s around; every check after the first cd failed "not
+   found"). Fixed: canonicalize at entry.
+2. The matrix's `ping` check asserted raw-socket success — root-only,
+   and CI runners are unprivileged. Fixed: assert flag parsing (the
+   device always runs as root).
+3. `test_runtime_poll`'s read-only-sentinel case only executes when
+   unprivileged, so it had NEVER run — and its assertion was wrong
+   (`touch` on an existing owned file succeeds despite a 555 parent;
+   utimensat ownership rule). Fixed: remove the sentinel so touch must
+   create through the read-only dir.
+
+Plus one diagnosability fix: `scripts/test.sh` now prints a failing
+test's captured output (the CI failure was undiagnosable from the
+runner log without it).
+
 ## Deviations from Spec
 
 None — spec written alongside implementation (Fable session; approval
