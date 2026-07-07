@@ -35,6 +35,14 @@ if [ -d "$CONTINUITY_PAK_DIR/share/templates" ]; then
     GIT_TEMPLATE_DIR="${GIT_TEMPLATE_DIR:-$CONTINUITY_PAK_DIR/share/templates}"
     export GIT_TEMPLATE_DIR
 fi
+# Belt: git re-invokes ITSELF (`git remote-https ...`) to spawn transport
+# helpers; make sure a `git` is findable by name even if exec-path
+# resolution misbehaves. Guarded on the real binary so test sandboxes
+# (which have no bin/git) keep their system git.
+if [ -x "$CONTINUITY_PAK_DIR/bin/git" ]; then
+    PATH="$CONTINUITY_PAK_DIR/bin:$PATH"
+    export PATH
+fi
 
 # pal_init — read device name from enrollment config and verify git binary
 # Returns 0 on success, 1 if enrollment incomplete or git binary missing.

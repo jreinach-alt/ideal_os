@@ -76,6 +76,12 @@ cp "$GIT_HTTPS_HELPER" "$PAK_DIR/libexec/git-core/git-remote-https"
 # http:// URLs use the same helper under a different name; exFAT has no
 # symlinks, so ship a copy
 cp "$GIT_HTTPS_HELPER" "$PAK_DIR/libexec/git-core/git-remote-http"
+# git spawns remote helpers as `git remote-https ...` (transport-helper.c
+# sets git_cmd=1) — the exec path must therefore contain `git` ITSELF,
+# exactly like a standard install's libexec/git-core. Without this copy,
+# devices with no system git fail every https operation with the
+# misleading "unable to find remote helper for 'https'".
+cp "$GIT_BIN" "$PAK_DIR/libexec/git-core/git"
 cp "$CA_BUNDLE" "$PAK_DIR/share/ca-bundle.crt"
 printf 'intentionally empty — silences git template warnings\n' \
     > "$PAK_DIR/share/templates/.keep"
@@ -112,7 +118,7 @@ printf '%s\n' "0.1.0-$(date '+%Y%m%d-%H%M')" > "$PAK_DIR/version.txt"
 # instead of surfacing as git's misleading "unable to find remote helper".
 # Format: <sha256> <bytes> <pak-relative-path>
 : > "$PAK_DIR/checksums.txt"
-for f in bin/git libexec/git-core/git-remote-https \
+for f in bin/git libexec/git-core/git libexec/git-core/git-remote-https \
          libexec/git-core/git-remote-http share/ca-bundle.crt; do
     printf '%s %s %s\n' \
         "$(sha256sum "$PAK_DIR/$f" | cut -d' ' -f1)" \
@@ -124,6 +130,7 @@ done
 
 find "$PAK_DIR" -name "*.sh" -exec chmod +x {} +
 chmod +x "$PAK_DIR/bin/git" \
+         "$PAK_DIR/libexec/git-core/git" \
          "$PAK_DIR/libexec/git-core/git-remote-https" \
          "$PAK_DIR/libexec/git-core/git-remote-http"
 
