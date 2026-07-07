@@ -154,7 +154,7 @@ if ! enroll_is_enrolled; then
         cat "$DIAG_FILE" >> "$ENROLL_LOG" 2>/dev/null
 
         if [ "$pf_rc" -ne 0 ]; then
-            show_daemon_text "$(printf '%s' "$_pf_first_fail" | cut -c1-64)"
+            show_daemon_text "$(printf '%s' "${_pf_first_fail:-preflight failed}" | cut -c1-64)"
             sleep 6
             show_daemon_text "Full report: SD card/CONTINUITY_DIAGNOSTIC.txt"
             sleep 4
@@ -213,4 +213,38 @@ else
     if [ -n "$last_err" ]; then
         show_simple "Last error: $last_err" 4
     fi
+fi
+
+# ── OTA update check (X installs, B/timeout skips) ──────────────────
+# Card swaps are for binaries and emergencies only: every script fix
+# flows through here, over the same git+TLS stack enrollment proved.
+# CONTINUITY_OTA=0 disables.
+
+if [ "$CONTINUITY_OTA" != "0" ]; then
+    check_module "scripts/update.sh"
+    check_module "scripts/enroll_ui.sh"
+    . ./scripts/update.sh
+    . ./scripts/enroll_ui.sh
+
+    show_daemon_start "Checking for updates (build $PAK_VERSION)..."
+    ota_rc=0
+    ota_info=$(ota_check 2>/dev/null) || ota_rc=$?
+    if [ "$ota_rc" -eq 0 ] && [ -n "$ota_info" ]; then
+        ota_ver="${ota_info% *}"
+        ota_commit="${ota_info##* }"
+        show_daemon_text "Update available: $ota_ver — X installs, B skips"
+        if btn=$(eui_prompt_button 40 "$EUI_BTN_X" "$EUI_BTN_B") && [ "$btn" = "$EUI_BTN_X" ]; then
+            show_daemon_text "Updating... (do not power off)"
+            if ota_apply "$ota_commit"; then
+                show_daemon_text "Updated to $(cat ./version.txt 2>/dev/null). Reboot when ready."
+            else
+                show_daemon_text "Update failed — see .continuity/update.log"
+            fi
+            sleep 4
+        fi
+    else
+        show_daemon_text "Up to date ($PAK_VERSION)"
+        sleep 2
+    fi
+    show_daemon_stop
 fi

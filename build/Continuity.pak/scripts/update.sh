@@ -1,229 +1,217 @@
 #!/bin/sh
 # shellcheck shell=ash  # BusyBox ash target — local is supported
 # shellcheck disable=SC3043
-# Continuity OTA Update — pull latest PAK from GitHub
-# Uses curl + GitHub API to download and extract new PAK version.
-# Preserves local state (.continuity/ directory is separate from PAK).
-set -e
+# Continuity OTA update — sync the PAK from the project repo using the
+# PAK's own bundled git. No curl, no tarballs, no system tools beyond
+# BusyBox: the update mechanism is the same proven git+TLS stack that
+# enrollment uses.
+#
+# Design:
+#   - A persistent shallow clone lives at $CONTINUITY_HOME/ota-repo,
+#     sparse-checked-out to just build/Continuity.pak (with a partial
+#     clone filter when the server supports it), so update checks and
+#     downloads are incremental — unchanged binaries are never refetched.
+#   - The update channel (branch) is read from ota_channel.txt in the
+#     PAK, written at build time from the branch the build came from.
+#   - Apply is staged: fetch → verify the fetched tree (CRLF scan +
+#     checksums.txt) → copy over the live PAK → sync. The daemon reads
+#     its scripts at boot, so replacing files mid-run takes effect on
+#     the next reboot.
+#
+# Functions are ota_-prefixed and individually testable; overridables:
+#   CONTINUITY_OTA_URL     — repo URL (default: the public project repo)
+#   CONTINUITY_OTA_BRANCH  — channel override (default: ota_channel.txt)
+#   CONTINUITY_HOME        — state root (default: /mnt/SDCARD/.continuity)
 
-PAK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTINUITY_HOME="/mnt/SDCARD/.continuity"
-UPDATE_LOG="$CONTINUITY_HOME/update.log"
-UPDATE_TMP="$CONTINUITY_HOME/update_tmp"
+OTA_PAK_DIR="${CONTINUITY_PAK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+OTA_HOME="${CONTINUITY_HOME:-/mnt/SDCARD/.continuity}"
+OTA_REPO="$OTA_HOME/ota-repo"
+OTA_LOG="$OTA_HOME/update.log"
+OTA_URL="${CONTINUITY_OTA_URL:-https://github.com/jreinach-alt/ideal_os}"
+OTA_GIT="${CONTINUITY_GIT_BIN:-$OTA_PAK_DIR/bin/git}"
 
-# ── Configuration ────────────────────────────────────────────────────
-# These are set during build or can be overridden.
-CONTINUITY_UPDATE_REPO="${CONTINUITY_UPDATE_REPO:-jreinach-alt/ideal_os}"
-CONTINUITY_UPDATE_BRANCH="${CONTINUITY_UPDATE_BRANCH:-main}"
-
-# Where to fetch the PAK archive from.
-# Option A: GitHub Release asset (production)
-# Option B: Raw files from a branch (development)
-CONTINUITY_UPDATE_MODE="${CONTINUITY_UPDATE_MODE:-branch}"
-
-# ── Logging ──────────────────────────────────────────────────────────
-
-log() {
-    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$UPDATE_LOG" 2>/dev/null
-    printf '%s\n' "$1" >&2
+ota_log() {
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$OTA_LOG" 2>/dev/null
 }
 
-# ── Utilities ────────────────────────────────────────────────────────
-
-# check_online — verify network connectivity
-check_online() {
-    ping -c 1 -W 3 github.com >/dev/null 2>&1 ||
-    wget --spider -q -T 3 https://github.com 2>/dev/null
-}
-
-# get_current_version — read local version
-get_current_version() {
-    if [ -f "$PAK_DIR/version.txt" ]; then
-        cat "$PAK_DIR/version.txt"
+# ota_channel — the branch this build tracks
+ota_channel() {
+    if [ -n "$CONTINUITY_OTA_BRANCH" ]; then
+        printf '%s\n' "$CONTINUITY_OTA_BRANCH"
+    elif [ -s "$OTA_PAK_DIR/ota_channel.txt" ]; then
+        cat "$OTA_PAK_DIR/ota_channel.txt"
     else
-        printf 'unknown\n'
+        printf 'main\n'
     fi
 }
 
-# ── Branch Mode (Development) ────────────────────────────────────────
-# Downloads a tarball of the repo branch and extracts PAK files from it.
-
-update_from_branch() {
-    local archive_url archive_file extract_dir
-    archive_url="https://github.com/${CONTINUITY_UPDATE_REPO}/archive/refs/heads/${CONTINUITY_UPDATE_BRANCH}.tar.gz"
-
-    log "Downloading from branch: $CONTINUITY_UPDATE_BRANCH"
-
-    rm -rf "$UPDATE_TMP"
-    mkdir -p "$UPDATE_TMP"
-    archive_file="$UPDATE_TMP/repo.tar.gz"
-
-    # Download
-    if ! curl -fSL --retry 3 -o "$archive_file" "$archive_url" 2>>"$UPDATE_LOG"; then
-        log "ERROR: Download failed"
-        rm -rf "$UPDATE_TMP"
-        return 1
-    fi
-
-    # Extract
-    extract_dir="$UPDATE_TMP/extracted"
-    mkdir -p "$extract_dir"
-    tar xzf "$archive_file" -C "$extract_dir"
-
-    # Find the repo root in the extracted archive
-    local repo_root
-    repo_root=$(find "$extract_dir" -maxdepth 1 -type d | tail -1)
-
-    # Verify expected structure exists
-    if [ ! -d "$repo_root/src/platforms/nextui" ]; then
-        log "ERROR: Expected repo structure not found"
-        rm -rf "$UPDATE_TMP"
-        return 1
-    fi
-
-    # Update scripts (core + platform)
-    log "Updating scripts..."
-
-    # Core modules
-    mkdir -p "$PAK_DIR/scripts/core"
-    for f in "$repo_root"/src/core/*.sh; do
-        [ -f "$f" ] && cp "$f" "$PAK_DIR/scripts/core/"
-    done
-
-    # Platform scripts
-    for f in pal_nextui.sh enroll_sd_card.sh enroll_ui.sh preflight.sh continuity_daemon.sh update.sh; do
-        if [ -f "$repo_root/src/platforms/nextui/$f" ]; then
-            cp "$repo_root/src/platforms/nextui/$f" "$PAK_DIR/scripts/"
-        fi
-    done
-
-    # launch.sh goes to PAK root
-    if [ -f "$repo_root/src/platforms/nextui/launch.sh" ]; then
-        cp "$repo_root/src/platforms/nextui/launch.sh" "$PAK_DIR/launch.sh"
-    fi
-
-    # Config
-    if [ -f "$repo_root/config/platform_maps/nextui.json" ]; then
-        mkdir -p "$PAK_DIR/config/platform_maps"
-        cp "$repo_root/config/platform_maps/nextui.json" "$PAK_DIR/config/platform_maps/"
-    fi
-
-    # Make everything executable
-    find "$PAK_DIR" -name "*.sh" -exec chmod +x {} +
-    [ -f "$PAK_DIR/bin/git" ] && chmod +x "$PAK_DIR/bin/git"
-
-    # Write version
-    local new_version
-    new_version="branch-${CONTINUITY_UPDATE_BRANCH}-$(date '+%Y%m%d-%H%M%S')"
-    printf '%s\n' "$new_version" > "$PAK_DIR/version.txt"
-
-    log "Update complete: $new_version"
-
-    # Cleanup
-    rm -rf "$UPDATE_TMP"
-    return 0
+# ota_git — run the bundled git with hang-proof transport settings
+ota_git() {
+    GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60 \
+        "$OTA_GIT" "$@"
 }
 
-# ── Release Mode (Production) ────────────────────────────────────────
-# Downloads a pre-built PAK archive from GitHub Releases.
+# ota_ensure_repo — create or reuse the persistent sparse OTA clone.
+# Returns: 0 ready, 1 failure (logged)
+ota_ensure_repo() {
+    local branch
+    branch=$(ota_channel)
+    mkdir -p "$OTA_HOME"
 
-update_from_release() {
-    log "Checking for latest release..."
-
-    local api_url latest_tag current_version
-    api_url="https://api.github.com/repos/${CONTINUITY_UPDATE_REPO}/releases/latest"
-    current_version=$(get_current_version)
-
-    # Get latest release info
-    local release_info
-    release_info=$(curl -fsSL "$api_url" 2>>"$UPDATE_LOG") || {
-        log "ERROR: Failed to fetch release info"
-        return 1
-    }
-
-    # Parse tag name (simple sed — no jq on BusyBox)
-    latest_tag=$(printf '%s' "$release_info" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-
-    if [ -z "$latest_tag" ]; then
-        log "ERROR: Could not parse release tag"
-        return 1
-    fi
-
-    if [ "$latest_tag" = "$current_version" ]; then
-        log "Already up to date: $current_version"
+    if [ -d "$OTA_REPO/.git" ]; then
         return 0
     fi
 
-    log "New version available: $latest_tag (current: $current_version)"
+    ota_log "Setting up OTA clone (channel: $branch)"
+    rm -rf "$OTA_REPO"
+    mkdir -p "$OTA_REPO"
 
-    # Find Continuity.pak.tar.gz asset
-    local asset_url
-    asset_url=$(printf '%s' "$release_info" | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*Continuity\.pak\.tar\.gz[^"]*\)".*/\1/p' | head -1)
+    # Partial clone keeps the first setup small (only the PAK's blobs are
+    # fetched at checkout). Some servers (and file:// test remotes without
+    # uploadpack.allowFilter) reject filters — fall back to a plain
+    # shallow clone.
+    if ! ota_git clone --depth 1 --branch "$branch" --no-checkout \
+            --filter=blob:none "$OTA_URL" "$OTA_REPO" >>"$OTA_LOG" 2>&1; then
+        ota_log "Filtered clone refused — falling back to plain shallow clone"
+        rm -rf "$OTA_REPO"
+        if ! ota_git clone --depth 1 --branch "$branch" --no-checkout \
+                "$OTA_URL" "$OTA_REPO" >>"$OTA_LOG" 2>&1; then
+            ota_log "ERROR: OTA clone failed"
+            rm -rf "$OTA_REPO"
+            return 1
+        fi
+    fi
 
-    if [ -z "$asset_url" ]; then
-        log "ERROR: No Continuity.pak.tar.gz asset in release"
+    if ! ota_git -C "$OTA_REPO" sparse-checkout set build/Continuity.pak >>"$OTA_LOG" 2>&1; then
+        ota_log "ERROR: sparse-checkout failed"
+        rm -rf "$OTA_REPO"
         return 1
     fi
-
-    # Download and extract
-    rm -rf "$UPDATE_TMP"
-    mkdir -p "$UPDATE_TMP"
-
-    log "Downloading: $asset_url"
-    if ! curl -fSL --retry 3 -o "$UPDATE_TMP/pak.tar.gz" "$asset_url" 2>>"$UPDATE_LOG"; then
-        log "ERROR: Download failed"
-        rm -rf "$UPDATE_TMP"
-        return 1
-    fi
-
-    # Preserve git binary (don't overwrite with potentially missing binary)
-    local git_backup
-    if [ -f "$PAK_DIR/bin/git" ]; then
-        git_backup="$UPDATE_TMP/git.backup"
-        cp "$PAK_DIR/bin/git" "$git_backup"
-    fi
-
-    # Extract over existing PAK
-    tar xzf "$UPDATE_TMP/pak.tar.gz" -C "$(dirname "$PAK_DIR")"
-
-    # Restore git binary if it was lost
-    if [ -n "$git_backup" ] && [ ! -f "$PAK_DIR/bin/git" ]; then
-        mkdir -p "$PAK_DIR/bin"
-        cp "$git_backup" "$PAK_DIR/bin/git"
-    fi
-
-    # Make everything executable
-    find "$PAK_DIR" -name "*.sh" -exec chmod +x {} +
-    [ -f "$PAK_DIR/bin/git" ] && chmod +x "$PAK_DIR/bin/git"
-
-    # Write version
-    printf '%s\n' "$latest_tag" > "$PAK_DIR/version.txt"
-
-    log "Update complete: $latest_tag"
-    rm -rf "$UPDATE_TMP"
     return 0
 }
 
-# ── Main ─────────────────────────────────────────────────────────────
+# ota_check — fetch the channel head; print "<new_version> <commit>" and
+# return 0 when an update is available, 1 when up to date / unavailable.
+ota_check() {
+    local branch head cur_commit new_version
+    branch=$(ota_channel)
 
-mkdir -p "$CONTINUITY_HOME"
+    ota_ensure_repo || return 1
 
-log "OTA update starting (mode: $CONTINUITY_UPDATE_MODE)"
+    if ! ota_git -C "$OTA_REPO" fetch --depth 1 origin "$branch" >>"$OTA_LOG" 2>&1; then
+        ota_log "ERROR: OTA fetch failed"
+        return 1
+    fi
 
-if ! check_online; then
-    log "ERROR: No network connectivity"
-    exit 1
-fi
+    head=$(ota_git -C "$OTA_REPO" rev-parse FETCH_HEAD 2>>"$OTA_LOG")
+    [ -n "$head" ] || return 1
 
-case "$CONTINUITY_UPDATE_MODE" in
-    branch)
-        update_from_branch
-        ;;
-    release)
-        update_from_release
-        ;;
-    *)
-        log "ERROR: Unknown update mode: $CONTINUITY_UPDATE_MODE"
-        exit 1
-        ;;
-esac
+    cur_commit=$(cat "$OTA_HOME/.ota_commit" 2>/dev/null)
+    if [ "$head" = "$cur_commit" ]; then
+        ota_log "Up to date at $head"
+        return 1
+    fi
+
+    # Materialize the fetched tree to read its version stamp
+    ota_git -C "$OTA_REPO" checkout -f "$head" >>"$OTA_LOG" 2>&1 || return 1
+    new_version=$(cat "$OTA_REPO/build/Continuity.pak/version.txt" 2>/dev/null)
+    new_version="${new_version:-unknown}"
+
+    ota_log "Update available: $new_version ($head)"
+    printf '%s %s\n' "$new_version" "$head"
+    return 0
+}
+
+# ota_verify_tree — sanity-check a fetched PAK tree before applying.
+# CRLF scan on scripts + checksum manifest verification of binaries.
+ota_verify_tree() {
+    local tree cr bad sum size path actual
+    tree="$1"
+    cr=$(printf '\r')
+
+    [ -f "$tree/launch.sh" ] || { ota_log "ERROR: fetched tree has no launch.sh"; return 1; }
+
+    bad=$(grep -rl "$cr" "$tree/scripts" "$tree/launch.sh" 2>/dev/null | head -1)
+    if [ -n "$bad" ]; then
+        ota_log "ERROR: fetched tree has CRLF corruption: $bad"
+        return 1
+    fi
+
+    if [ -f "$tree/checksums.txt" ]; then
+        while IFS=' ' read -r sum size path; do
+            [ -n "$path" ] || continue
+            actual=$(cat "$tree/$path" 2>/dev/null | wc -c)
+            if [ "$actual" != "$size" ]; then
+                ota_log "ERROR: fetched $path size $actual != $size"
+                return 1
+            fi
+            if command -v sha256sum >/dev/null 2>&1; then
+                if [ "$(sha256sum "$tree/$path" 2>/dev/null | cut -d' ' -f1)" != "$sum" ]; then
+                    ota_log "ERROR: fetched $path checksum mismatch"
+                    return 1
+                fi
+            fi
+        done < "$tree/checksums.txt"
+    fi
+    return 0
+}
+
+# ota_apply — copy the verified fetched PAK over the live one.
+# The daemon picks up changes on next boot. Returns 0 on success.
+ota_apply() {
+    local commit tree new_version
+    commit="$1"
+    tree="$OTA_REPO/build/Continuity.pak"
+
+    ota_verify_tree "$tree" || return 1
+
+    ota_log "Applying update $commit"
+
+    # Scripts, config, manifests first; binaries after (largest last so
+    # an interrupted copy is most likely to leave scripts consistent —
+    # and preflight's checksum verification catches a torn binary).
+    cp "$tree/launch.sh" "$OTA_PAK_DIR/launch.sh" || return 1
+    mkdir -p "$OTA_PAK_DIR/scripts/core" "$OTA_PAK_DIR/config/platform_maps" \
+             "$OTA_PAK_DIR/share/templates" "$OTA_PAK_DIR/libexec/git-core" "$OTA_PAK_DIR/bin"
+    cp "$tree"/scripts/*.sh "$OTA_PAK_DIR/scripts/" || return 1
+    cp "$tree"/scripts/core/*.sh "$OTA_PAK_DIR/scripts/core/" || return 1
+    cp "$tree"/config/platform_maps/*.json "$OTA_PAK_DIR/config/platform_maps/" 2>/dev/null
+    cp "$tree/config/system_taxonomy.json" "$OTA_PAK_DIR/config/" 2>/dev/null
+    cp "$tree/version.txt" "$OTA_PAK_DIR/version.txt" 2>/dev/null
+    cp "$tree/checksums.txt" "$OTA_PAK_DIR/checksums.txt" 2>/dev/null
+    cp "$tree/ota_channel.txt" "$OTA_PAK_DIR/ota_channel.txt" 2>/dev/null
+
+    # Binaries: only rewrite ones whose size differs (cheap change probe;
+    # rewriting 20+ MB over SD for identical bytes wears the card and
+    # widens the interruption window for nothing).
+    for b in bin/git libexec/git-core/git libexec/git-core/git-remote-https \
+             libexec/git-core/git-remote-http share/ca-bundle.crt; do
+        if [ -f "$tree/$b" ]; then
+            if [ "$(cat "$tree/$b" 2>/dev/null | wc -c)" != "$(cat "$OTA_PAK_DIR/$b" 2>/dev/null | wc -c)" ]; then
+                ota_log "Updating binary: $b"
+                cp "$tree/$b" "$OTA_PAK_DIR/$b" || return 1
+            fi
+        fi
+    done
+
+    find "$OTA_PAK_DIR" -name "*.sh" -exec chmod +x {} +
+    chmod +x "$OTA_PAK_DIR/bin/git" "$OTA_PAK_DIR"/libexec/git-core/* 2>/dev/null
+
+    printf '%s\n' "$commit" > "$OTA_HOME/.ota_commit"
+    sync
+
+    new_version=$(cat "$OTA_PAK_DIR/version.txt" 2>/dev/null)
+    ota_log "Update applied: ${new_version:-unknown} ($commit)"
+    return 0
+}
+
+# ota_run — check and apply in one call (used by scripted/manual flows).
+# Returns: 0 updated, 1 no update, 2 failure.
+ota_run() {
+    local info commit
+    mkdir -p "$OTA_HOME"
+    info=$(ota_check) || return 1
+    commit="${info##* }"
+    ota_apply "$commit" || return 2
+    return 0
+}

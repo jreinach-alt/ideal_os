@@ -113,6 +113,11 @@ cp "$CONFIG_DIR/system_taxonomy.json" "$PAK_DIR/config/"
 # the device screen, or "which build ran?" costs an SD-card round-trip.
 printf '%s\n' "0.1.0-$(date '+%Y%m%d-%H%M')" > "$PAK_DIR/version.txt"
 
+# OTA channel: each build knows which branch it came from, so the
+# on-device updater tracks the same line of development.
+ota_branch=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+printf '%s\n' "${ota_branch:-main}" > "$PAK_DIR/ota_channel.txt"
+
 # Checksums for the binaries: the preflight doctor verifies these on the
 # device, so a truncated/corrupted SD-card copy names itself on screen
 # instead of surfacing as git's misleading "unable to find remote helper".

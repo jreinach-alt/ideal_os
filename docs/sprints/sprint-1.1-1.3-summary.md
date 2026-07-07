@@ -177,6 +177,21 @@ with the build prefix baked in — the PAK only ever shipped `bin/git`.
 Tests: `test_preflight.sh` (23 assertions), launch.sh preflight-gate
 integration asserts. Suite: 29 files green.
 
+## Addendum 4 (2026-07-07): HARDWARE VALIDATION — first successful enrollment
+
+Attempt 7 succeeded on the TrimUI Brick: boot hook → daemon → network
+wait → preflight (all green) → vendored git over TLS → repo cloned →
+device registration committed and pushed to the user's saves repo
+(`.continuity/devices/my-brick.json` visible on GitHub). The full Sprint
+1.1 + 1.2 critical path is now hardware-proven; Sprint 1.3's poll loop
+runs but has not yet synced a real save (the card has no SRAM files yet).
+
+Followed by Sprint 1.6 (OTA updates — see `sprint-1.6-spec.md`) and the
+Opus-era documentation package: `docs/platform/nextui-field-notes.md`
+(all hardware-won facts), CLAUDE.md "NextUI Build, Validation & Delivery
+Protocol" + "Model Regimen" sections, and the PAL contract addendum in
+`docs/design/pal.md`.
+
 ## Open Items
 
 1. **On-device validation checklist not yet run** (specs 1.1 D1–D6, 1.2

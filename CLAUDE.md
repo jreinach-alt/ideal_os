@@ -225,6 +225,46 @@ Scopes: `core`, `nextui`, `onion`, `retrodeck`, `android`, `enrollment`, `config
 - Tests must run under `busybox ash` for core and constrained-platform code.
 - Tests must be self-contained — create temp dirs, clean up after.
 
+## NextUI Build, Validation & Delivery Protocol
+
+Hardware-validated on the TrimUI Brick 2026-07-07. Details and the full
+trap list: `docs/platform/nextui-field-notes.md` — **read it before any
+NextUI platform work.**
+
+1. **Build:** `scripts/build_git.sh` (cross-compiles git + https helpers,
+   once per toolchain change) → `scripts/build_pak.sh` (assembles
+   `build/Continuity.pak` with version stamp, OTA channel, checksums).
+2. **Validate before shipping any binary:** run the SHIPPED artifact under
+   `qemu-aarch64-static` against live GitHub **with the host git hidden**
+   (`mv /usr/bin/git` during the test) and every ARM→ARM exec edge
+   shimmed. Never use binfmt_misc in the build container.
+3. **Deliver as a versioned zip** (`Continuity.pak-<version>.zip`) built
+   from the verified tree. Never instruct anyone to copy from a git
+   working tree (line-ending smudge history; see field notes).
+4. **After first enrollment, prefer OTA** (`scripts/update.sh`, tap-driven
+   on-device): push to the channel branch, the device pulls it. Card
+   swaps are for binaries and a broken launch/update bootstrap only.
+5. **Observability is a requirement:** every failure must name itself
+   on-screen with the build stamp; the preflight report goes to
+   `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb
+   or diagnostics behind env vars nothing on-device sets.
+
+## Model Regimen
+
+Default development model: **Opus**, following the sprint methodology
+(spec → implement → QA → summary) with the protocols in this file.
+Escalate to **Fable** (sparingly) when a problem matches these classes:
+
+- Cross-compilation / toolchain bring-up (new binaries, new platforms)
+- Binary/system internals (git transport plumbing, exec semantics,
+  kernel-adjacent debugging, emulation)
+- A device failure that survives TWO Opus fix attempts with the
+  diagnostic file in hand
+- Architecture decisions that change the PAL contract or security model
+
+Before ending any session, update the active sprint summary with defects
+found/fixed and open items — the next session's context depends on it.
+
 ## Session Startup Protocol
 
 ### Step 1 — Read CLAUDE.md

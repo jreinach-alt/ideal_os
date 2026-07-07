@@ -205,7 +205,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.1 — Daemon Bootstrap + Enrollment
 
-**Status:** Implemented — pending approval (QA'd 2026-07-06, see sprint-1.1-1.3-summary.md)
+**Status:** Implemented — HARDWARE-VALIDATED 2026-07-07 (first successful enrollment on TrimUI Brick; device registration pushed to user repo). Pending formal approval; see sprint-1.1-1.3-summary.md.
 
 **Scope:**
 - Implement `src/platforms/nextui/continuity_daemon.sh` — daemon skeleton
@@ -286,6 +286,14 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 - All tests pass under `busybox ash`
 
 **Dependencies:** Sprint 1.3 (poll loop + shutdown)
+
+---
+
+### Sprint 1.6 — OTA Updates
+
+**Status:** Implemented — pending approval (2026-07-07, spec: sprint-1.6-spec.md)
+
+**Scope:** git-based over-the-air updates using the bundled git — persistent sparse clone of the tracked PAK, channel from build branch, verified staged apply, X/B on-device prompt. Card swaps only for binaries and bootstrap breakage.
 
 ---
 

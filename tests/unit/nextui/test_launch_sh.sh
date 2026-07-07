@@ -71,6 +71,7 @@ cp "$PROJECT_ROOT/src/platforms/nextui/pal_nextui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_sd_card.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_ui.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT/src/platforms/nextui/preflight.sh" "$PAK/scripts/"
+cp "$PROJECT_ROOT/src/platforms/nextui/update.sh" "$PAK/scripts/"
 cp "$PROJECT_ROOT"/src/core/*.sh "$PAK/scripts/core/"
 printf '0.1.0-test\n' > "$PAK/version.txt"
 chmod +x "$PAK/launch.sh"
@@ -114,6 +115,7 @@ run_launch() {
     CONTINUITY_PID_FILE="$PID_FILE" CONTINUITY_SHOW2_FIFO="$FIFO_CAP" \
     CONTINUITY_FORCE_ONLINE=1 GIT_EXEC_PATH="$SYS_GIT_EXEC_PATH" \
     PF_LSREMOTE_URL="file://$REMOTE" \
+    CONTINUITY_OTA="${TEST_OTA:-0}" CONTINUITY_OTA_URL="${TEST_OTA_URL:-}" \
     USERDATA_PATH="$USERDATA" PATH="$STUB_BIN:$PATH" \
     EUI_FIFO="$FIFO_CAP" EUI_JS_DEV="$TEST_TMPDIR/js0" \
     EUI_TICK="0.1" EUI_TIMEOUT_TICKS=100 \
@@ -213,6 +215,43 @@ rc=0; run_launch || rc=$?
 assert_contains "daemon-not-running shown with build stamp" "$SHOW2_CALLS" \
     "Daemon NOT running (build 0.1.0-test). Reboot to start it."
 assert_contains "last error surfaced" "$SHOW2_CALLS" "Push failed: network unreachable"
+
+# --- Test 6b: OTA end-to-end — update offered on X press, applied ---
+
+UPSTREAM="$TEST_TMPDIR/ota-upstream"
+mkdir -p "$UPSTREAM"
+git -C "$UPSTREAM" init -q -b main
+git -C "$UPSTREAM" config user.email t@t; git -C "$UPSTREAM" config user.name t
+TREE="$UPSTREAM/build/Continuity.pak"
+mkdir -p "$TREE/scripts/core"
+printf '#!/bin/sh\n# ota-marker\ntrue\n' > "$TREE/launch.sh"
+printf '#!/bin/sh\ntrue\n' > "$TREE/scripts/update.sh"
+printf '#!/bin/sh\ntrue\n' > "$TREE/scripts/core/pal.sh"
+printf '9.9.9-ota\n' > "$TREE/version.txt"
+printf 'main\n' > "$TREE/ota_channel.txt"
+git -C "$UPSTREAM" add -A && git -C "$UPSTREAM" commit -qm ota
+printf 'main\n' > "$PAK/ota_channel.txt"
+
+# Daemon "alive", X press queued for the update prompt
+printf '%s\n' "$$" > "$PID_FILE"
+: > "$CHOME/continuity.log"
+: > "$TEST_TMPDIR/js0"
+printf "$(printf '\\%03o\\%03o\\%03o\\%03o\\%03o\\%03o\\%03o\\%03o' 0 0 0 0 1 0 1 3)" \
+    >> "$TEST_TMPDIR/js0"     # js_event: X press (value=1 type=1 number=3)
+: > "$FIFO_CAP"
+rc=0; TEST_OTA=1 TEST_OTA_URL="file://$UPSTREAM" run_launch || rc=$?
+assert_eq "OTA launch exits 0" "0" "$rc"
+assert_contains "update offered" "$FIFO_CAP" "Update available: 9.9.9-ota"
+assert_contains "update applied confirmation" "$FIFO_CAP" "Updated to 9.9.9-ota"
+assert_contains "PAK launch.sh replaced by OTA" "$PAK/launch.sh" "ota-marker"
+assert_eq "PAK version now OTA version" "9.9.9-ota" "$(cat "$PAK/version.txt")"
+
+# Restore the real launch.sh and modules the OTA fixture overwrote
+cp "$PROJECT_ROOT/src/platforms/nextui/launch.sh" "$PAK/launch.sh"
+cp "$PROJECT_ROOT/src/platforms/nextui/update.sh" "$PAK/scripts/update.sh"
+cp "$PROJECT_ROOT/src/core/pal.sh" "$PAK/scripts/core/pal.sh"
+printf '0.1.0-test\n' > "$PAK/version.txt"
+chmod +x "$PAK/launch.sh"
 
 # --- Test 7: CRLF-corrupted module is named on screen, not a silent death ---
 

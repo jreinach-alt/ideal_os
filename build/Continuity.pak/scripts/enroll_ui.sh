@@ -111,6 +111,30 @@ eui_next_button() {
     return 0
 }
 
+# eui_prompt_button — wait (bounded) for one of the accepted buttons.
+# Usage: eui_prompt_button <timeout_ticks> <accepted_number>...
+# Prints the pressed number and returns 0, or returns 1 on timeout.
+eui_prompt_button() {
+    local ticks btn a
+    ticks="$1"; shift
+    eui_btn_listener_start "${EUI_BTN_PROMPT_FILE:-/tmp/continuity_prompt.buttons}"
+    while [ "$ticks" -gt 0 ]; do
+        if btn=$(eui_next_button); then
+            for a in "$@"; do
+                if [ "$btn" = "$a" ]; then
+                    eui_btn_listener_stop
+                    printf '%s\n' "$btn"
+                    return 0
+                fi
+            done
+        fi
+        sleep "$EUI_TICK"
+        ticks=$((ticks - 1))
+    done
+    eui_btn_listener_stop
+    return 1
+}
+
 # eui_log_replay — step through the last 12 log lines on screen.
 eui_log_replay() {
     local log_file line
