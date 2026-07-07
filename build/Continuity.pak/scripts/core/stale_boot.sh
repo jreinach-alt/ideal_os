@@ -190,10 +190,14 @@ sb_run() {
     _sb_changed=$(cat "$_sb_tmpfile")
     rm -f "$_sb_tmpfile"
 
-    # Step 5: Commit and push catch-up changes
-    if [ "$_sb_changed" = "1" ]; then
-        local staged
-        staged=$(cd_detect_changes "$repo_dir")
+    # Step 5: Commit and push catch-up changes.
+    # git's view is authoritative, not just this run's copy flag: a file
+    # copied into the repo tree by an EARLIER run that failed to stage
+    # (the porcelain-quoting bug stranded exactly such files) must still
+    # be committed now.
+    local staged
+    staged=$(cd_detect_changes "$repo_dir")
+    if [ "$_sb_changed" = "1" ] || [ -n "$staged" ]; then
         if [ -n "$staged" ]; then
             if ! se_stage_files "$repo_dir" "$staged"; then
                 pal_log "error" "Stale boot: failed to stage catch-up files"

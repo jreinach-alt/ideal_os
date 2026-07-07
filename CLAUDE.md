@@ -232,18 +232,23 @@ trap list: `docs/platform/nextui-field-notes.md` — **read it before any
 NextUI platform work.**
 
 1. **Build:** `scripts/build_git.sh` (cross-compiles git + https helpers,
-   once per toolchain change) → `scripts/build_pak.sh` (assembles
+   once per toolchain change) → `scripts/build_busybox.sh` (the daemon's
+   pinned interpreter, fail-open) → `scripts/build_pak.sh` (assembles
    `build/Continuity.pak` with version stamp, OTA channel, checksums).
 2. **Validate before shipping any binary:** run the SHIPPED artifact under
    `qemu-aarch64-static` against live GitHub **with the host git hidden**
    (`mv /usr/bin/git` during the test) and every ARM→ARM exec edge
-   shimmed. Never use binfmt_misc in the build container.
+   shimmed. Never use binfmt_misc in the build container. For busybox,
+   run `scripts/validate_busybox.sh` against the shipped binary (69-check
+   matrix: direct dispatch, in-process tier, PATH fall-through).
 3. **Deliver as a versioned zip** (`Continuity.pak-<version>.zip`) built
    from the verified tree. Never instruct anyone to copy from a git
    working tree (line-ending smudge history; see field notes).
 4. **After first enrollment, prefer OTA** (`scripts/update.sh`, tap-driven
    on-device): push to the channel branch, the device pulls it. Card
-   swaps are for binaries and a broken launch/update bootstrap only.
+   swaps are for a broken launch/update bootstrap and for binaries that
+   are NOT fail-open (git). The vendored busybox is explicitly OTA-safe:
+   a torn copy fails the daemon's self-test and falls back to device sh.
 5. **Observability is a requirement:** every failure must name itself
    on-screen with the build stamp; the preflight report goes to
    `CONTINUITY_DIAGNOSTIC.txt` at the SD root. Never gate the breadcrumb

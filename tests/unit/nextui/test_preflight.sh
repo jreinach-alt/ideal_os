@@ -198,6 +198,34 @@ rc=0; pf_run "$R10" || rc=$?
 assert_eq "healthy run with mapper stays green" "0" "$rc"
 assert_contains "mapping check passes with real map" "$R10" "watched dirs; SFC probe translates"
 
+# --- Test 11: vendored busybox states (all fail-open, never fatal) ---
+# 11a: absent → info (Test 1's green run already had no bin/busybox)
+assert_contains "absent busybox is informational" "$R1" "not bundled"
+
+# 11b: bundled + healthy → ok, predicts daemon pinning
+mkdir -p "$PAK/bin"
+printf '#!/bin/sh\nexit 0\n' > "$PAK/bin/busybox"
+chmod +x "$PAK/bin/busybox"
+R11="$TEST_TMPDIR/r11.txt"
+rc=0; pf_run "$R11" || rc=$?
+assert_eq "healthy busybox stays green" "0" "$rc"
+assert_contains "healthy busybox predicts pinning" "$R11" "daemon will pin to it"
+
+# 11c: bundled but broken → warn only, run stays green
+printf '#!/bin/sh\nexit 1\n' > "$PAK/bin/busybox"
+chmod +x "$PAK/bin/busybox"
+R11c="$TEST_TMPDIR/r11c.txt"
+rc=0; pf_run "$R11c" || rc=$?
+assert_eq "broken busybox never fails preflight" "0" "$rc"
+assert_contains "broken busybox warns with fallback" "$R11c" "falls back to device sh"
+
+# 11d: kill switch → info
+R11d="$TEST_TMPDIR/r11d.txt"
+rc=0; CONTINUITY_VENDOR_SH=0 pf_run "$R11d" || rc=$?
+assert_eq "kill switch stays green" "0" "$rc"
+assert_contains "kill switch reported" "$R11d" "disabled (CONTINUITY_VENDOR_SH=0)"
+rm -rf "$PAK/bin"
+
 # --- Report ---
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

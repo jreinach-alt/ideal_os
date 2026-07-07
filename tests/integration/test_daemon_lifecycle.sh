@@ -115,10 +115,25 @@ export CONTINUITY_STATE_MAX_KB=2
 # Fake PAK: real daemon + real core modules, test PAL standing in for the
 # NextUI PAL (same interface, temp-dir paths, always online).
 FAKE_PAK="$TEST_TMPDIR/pak"
-mkdir -p "$FAKE_PAK/scripts/core"
+mkdir -p "$FAKE_PAK/scripts/core" "$FAKE_PAK/bin"
 cp "$TESTS_DIR/fixtures/pal_test.sh" "$FAKE_PAK/scripts/pal_nextui.sh"
 cp "$PROJECT_ROOT/src/platforms/nextui/enroll_sd_card.sh" "$FAKE_PAK/scripts/"
 cp "$PROJECT_ROOT"/src/core/*.sh "$FAKE_PAK/scripts/core/"
+
+# Vendored interpreter: the host's busybox stands in for the aarch64 one.
+# The daemon must self-test it, re-exec under it (same PID — the SIGTERM
+# and wait assertions below depend on that), and log the pinned line.
+# (Under busybox ash, `command -v busybox` returns the bare applet name,
+# not a path — resolve to a real file explicitly.)
+HOST_BB=$(command -v busybox)
+case "$HOST_BB" in
+    /*) ;;
+    *)  for p in /usr/bin/busybox /bin/busybox /usr/local/bin/busybox; do
+            if [ -x "$p" ]; then HOST_BB="$p"; break; fi
+        done ;;
+esac
+cp "$HOST_BB" "$FAKE_PAK/bin/busybox"
+chmod +x "$FAKE_PAK/bin/busybox"
 
 # --- Start the daemon as a real background process ---
 
@@ -178,6 +193,8 @@ fi
 
 assert_log_contains "S1: normal boot dispatched" "Boot: normal"
 assert_log_contains "S1: poll loop entered" "Entering poll loop"
+assert_log_contains "S1: daemon re-execed under vendored interpreter" \
+    "Interpreter: vendored busybox (pinned)"
 assert_file_exists "S1: PID file present while running" "$DAEMON_PID_FILE"
 assert_file_not_exists "S1: clean marker consumed at boot" \
     "$ET_REPO_DIR/.continuity/clean_shutdown"

@@ -159,6 +159,28 @@ pf_check_binaries() {
     fi
 }
 
+# pf_check_busybox — the vendored interpreter, probed with the daemon's
+# own self-test so this report PREDICTS the daemon's re-exec decision.
+# Fail-open by design: absent/broken is never fatal — the daemon then
+# runs under the device shell exactly as it did before vendoring.
+pf_check_busybox() {
+    local bb
+    bb="$CONTINUITY_PAK_DIR/bin/busybox"
+    if [ "${CONTINUITY_VENDOR_SH:-1}" != "1" ]; then
+        pf_emit "info" "busybox" "disabled (CONTINUITY_VENDOR_SH=0) — daemon uses device sh"
+        return 0
+    fi
+    if [ ! -x "$bb" ]; then
+        pf_emit "info" "busybox" "not bundled — daemon uses device sh"
+        return 0
+    fi
+    if "$bb" ash -c 'true' >/dev/null 2>&1; then
+        pf_emit "ok" "busybox" "vendored interpreter passes self-test — daemon will pin to it"
+    else
+        pf_emit "warn" "busybox" "bundled but fails self-test — daemon falls back to device sh"
+    fi
+}
+
 # Real end-to-end probe: DNS + TCP + TLS + CA + clock + https helper in
 # one shot, no credentials involved. Only meaningful if network is up.
 # GIT_EXEC_PATH/GIT_SSL_CAINFO are re-defaulted inline as a belt against
@@ -251,6 +273,7 @@ pf_run() {
     pf_check_git_binary
     pf_check_https_helper
     pf_check_binaries
+    pf_check_busybox
     pf_check_ca_bundle
     pf_check_mapping
     if pf_check_network; then

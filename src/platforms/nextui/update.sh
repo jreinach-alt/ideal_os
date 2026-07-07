@@ -194,7 +194,7 @@ ota_apply() {
     # Binaries: only rewrite ones whose size differs (cheap change probe;
     # rewriting 20+ MB over SD for identical bytes wears the card and
     # widens the interruption window for nothing).
-    for b in bin/git libexec/git-core/git libexec/git-core/git-remote-https \
+    for b in bin/git bin/busybox libexec/git-core/git libexec/git-core/git-remote-https \
              libexec/git-core/git-remote-http share/ca-bundle.crt; do
         if [ -f "$tree/$b" ]; then
             if [ "$(cat "$tree/$b" 2>/dev/null | wc -c)" != "$(cat "$OTA_PAK_DIR/$b" 2>/dev/null | wc -c)" ]; then
@@ -205,7 +205,7 @@ ota_apply() {
     done
 
     find "$OTA_PAK_DIR" -name "*.sh" -exec chmod +x {} +
-    chmod +x "$OTA_PAK_DIR/bin/git" "$OTA_PAK_DIR"/libexec/git-core/* 2>/dev/null
+    chmod +x "$OTA_PAK_DIR"/bin/* "$OTA_PAK_DIR"/libexec/git-core/* 2>/dev/null
 
     printf '%s\n' "$commit" > "$OTA_HOME/.ota_commit"
     sync

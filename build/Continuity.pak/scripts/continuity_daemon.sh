@@ -52,6 +52,65 @@ cd_remove_pid() {
     return 0
 }
 
+# ── Vendored Interpreter (fail-open) ─────────────────────────────────
+
+# cd_reexec_busybox — re-exec the daemon under the PAK's pinned BusyBox.
+# The device's /bin/sh is whatever BusyBox build the firmware shipped;
+# version and applet drift across NextUI forks is real. The PAK carries
+# the exact BusyBox the test suite runs under (build_busybox.sh), and
+# with SH_STANDALONE its ash prefers its own applets — pinning grep,
+# sed, find, cmp and friends too, not just the shell dialect.
+#
+# FAIL-OPEN INVARIANT: every path out of this function other than a
+# fully self-tested exec falls through to the device shell. A missing,
+# truncated, wrong-arch, or otherwise broken vendored binary must never
+# take the daemon down with it — the device shell runs the daemon today
+# and remains the safety net. launch.sh never uses the vendored
+# interpreter at all: the bootstrap/recovery path stays device-native.
+#
+# Test hooks: CONTINUITY_VENDOR_SH=0 kill switch; CONTINUITY_DAEMON_SELF
+# overrides the script path used for the parse probe and re-exec.
+cd_reexec_busybox() {
+    # Already running under the vendored interpreter — never loop.
+    [ -z "$CONTINUITY_BB_REEXEC" ] || { CONTINUITY_BB_STATUS="vendored busybox (pinned)"; return 0; }
+
+    if [ "${CONTINUITY_VENDOR_SH:-1}" != "1" ]; then
+        CONTINUITY_BB_STATUS="device sh (vendored interpreter disabled)"
+        return 0
+    fi
+
+    local bb self
+    bb="$CONTINUITY_PAK_DIR/bin/busybox"
+    self="${CONTINUITY_DAEMON_SELF:-$0}"
+
+    if [ ! -x "$bb" ]; then
+        CONTINUITY_BB_STATUS="device sh (no vendored busybox bundled)"
+        return 0
+    fi
+
+    # Self-test 1: the binary executes on this hardware and its ash runs
+    # a command (catches wrong-arch, truncated copy, exec format errors).
+    if ! "$bb" ash -c 'true' >/dev/null 2>&1; then
+        CONTINUITY_BB_STATUS="device sh (vendored busybox failed self-test)"
+        return 0
+    fi
+
+    # Self-test 2: the vendored ash can parse this script.
+    if ! "$bb" ash -n "$self" >/dev/null 2>&1; then
+        CONTINUITY_BB_STATUS="device sh (vendored ash cannot parse daemon)"
+        return 0
+    fi
+
+    CONTINUITY_BB_REEXEC=1
+    export CONTINUITY_BB_REEXEC
+    # Note: ash exits (127) if exec itself fails — it does not return.
+    # The self-tests above just executed this exact binary twice, so a
+    # failure here means the file changed in the last few milliseconds;
+    # there is no shell-level way to guard that residual window while
+    # keeping same-PID semantics (PID file, SIGTERM supervision).
+    exec "$bb" ash "$self" "$@"
+}
+
 # ── Module Loading ───────────────────────────────────────────────────
 
 # cd_source_file — source a file with error handling
@@ -282,6 +341,12 @@ cd_main() {
     CONTINUITY_PAK_DIR="${CONTINUITY_PAK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
     export CONTINUITY_PAK_DIR
 
+    # Pinned interpreter, before anything else touches state. Either
+    # execs (and this function restarts under the vendored ash with
+    # CONTINUITY_BB_REEXEC=1) or falls through with a reason in
+    # CONTINUITY_BB_STATUS.
+    cd_reexec_busybox "$@"
+
     # Log file setup
     CONTINUITY_LOG_FILE="${CONTINUITY_LOG_FILE:-/mnt/SDCARD/.continuity/continuity.log}"
     mkdir -p "$(dirname "$CONTINUITY_LOG_FILE")"
@@ -292,6 +357,7 @@ cd_main() {
     }
 
     pal_log_early "info" "Daemon v${CONTINUITY_VERSION} starting (PID $$)"
+    pal_log_early "info" "Interpreter: ${CONTINUITY_BB_STATUS:-device sh}"
 
     # PID guard
     if cd_is_running; then

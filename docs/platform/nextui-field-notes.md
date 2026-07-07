@@ -178,6 +178,56 @@ delivered only to devices advertising the identical core, never
 conflict-merged, size-capped. Requires its own approved spec; do not
 implement casually.
 
+## Vendored BusyBox — the daemon's pinned interpreter (2026-07-07)
+
+The device's `/bin/sh` and userland are whatever BusyBox build the
+firmware (or fork) shipped — version/applet drift across NextUI forks is
+real, and the test suite runs under busybox 1.36.1, not under "whatever
+the device has". The PAK now ships `bin/busybox` (static aarch64 1.36.1,
+`scripts/build_busybox.sh`) and the daemon re-execs itself under it.
+
+- **Fail-open invariant**: the daemon re-execs ONLY after the binary
+  passes an on-device self-test (`busybox ash -c true` + `ash -n` parse
+  of the daemon itself). Missing/truncated/wrong-arch binary → daemon
+  keeps running under the device shell exactly as before vendoring.
+  `launch.sh` and the enrollment UI NEVER use the vendored interpreter —
+  the bootstrap/recovery path stays device-native. Kill switch:
+  `CONTINUITY_VENDOR_SH=0`. The log names the decision every boot
+  ("Interpreter: vendored busybox (pinned)" / "device sh (reason)"),
+  and preflight's `busybox` check runs the same self-test, so the
+  diagnostic predicts the daemon's choice.
+- **Applet pinning** via `CONFIG_FEATURE_SH_STANDALONE` +
+  `CONFIG_FEATURE_PREFER_APPLETS`: the vendored ash resolves bare
+  command names to its own applets (no symlink farm — exFAT has none).
+  Two tiers: NOEXEC/NOFORK applets (find, cut, head, date, rm, cp, mv,
+  mktemp, chmod, sha256sum, dd, dirname, basename, mkdir, touch, sync)
+  run **in-process**; plain applets (grep, sed, tr, cat, cmp, wc, sleep,
+  ping, wget, od — yes, grep and sed are PLAIN in 1.36.1, not NOEXEC)
+  re-exec via `/proc/self/exe`, which on-device is a native exec of the
+  same binary. If that self-exec ever fails, busybox **falls through to
+  normal PATH lookup** (device tools) — fail-open at the applet level
+  too. Absolute-path invocations (our bundled git) are never shadowed.
+- **qemu testability boundary**: under qemu-user with no binfmt (binfmt
+  is forbidden here — see validation protocol) the `/proc/self/exe`
+  self-exec ENOEXECs, so the exec-tier applets cannot be demonstrated
+  end-to-end in emulation. The validation matrix
+  (`scripts/validate_busybox.sh`, run it against the SHIPPED
+  `build/Continuity.pak/bin/busybox`) therefore proves three things
+  separately: every invocation form via DIRECT dispatch
+  (`busybox grep ...`), the in-process tier under `PATH=/nonexistent`,
+  and the exec-tier PATH fall-through. The
+  lifecycle test re-execs the real daemon under a host busybox to prove
+  the re-exec mechanics (same PID — SIGTERM supervision depends on it).
+- **Build traps**: busybox 1.36.1 `tc.c` does not compile against
+  kernel headers >= 6.8 (`TCA_CBQ_*` removed) — `CONFIG_TC` must be
+  off. The final `busybox` binary appears only when make fully
+  succeeds; `make ... ; tail log` exit codes lie (the tail's rc wins).
+  busybox `ping` needs root for raw ICMP — fine, everything on the
+  device runs as root.
+- **OTA-safe by construction**: a torn OTA copy of `bin/busybox` fails
+  the self-test and the daemon falls back to device sh while preflight
+  warns — this is the one binary class that is safe to ship OTA.
+
 ## The porcelain-quoting trap (the real "no saves" root cause)
 
 `git status --porcelain` C-quotes any path containing spaces, quotes, or

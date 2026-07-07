@@ -9,6 +9,7 @@ PAK_DIR="$PROJECT_ROOT/build/Continuity.pak"
 PREFIX="$PROJECT_ROOT/build/aarch64/prefix"
 GIT_BIN="$PREFIX/bin/git"
 GIT_HTTPS_HELPER="$PREFIX/libexec/git-core/git-remote-https"
+BUSYBOX_BIN="$PREFIX/bin/busybox"
 PLATFORM_DIR="$PROJECT_ROOT/src/platforms/nextui"
 CORE_DIR="$PROJECT_ROOT/src/core"
 CONFIG_DIR="$PROJECT_ROOT/config"
@@ -25,6 +26,10 @@ if [ ! -f "$GIT_HTTPS_HELPER" ] && [ -f "$PAK_DIR/libexec/git-core/git-remote-ht
     GIT_HTTPS_HELPER="$PROJECT_ROOT/build/git-remote-https.preserved"
     cp "$PAK_DIR/libexec/git-core/git-remote-https" "$GIT_HTTPS_HELPER"
 fi
+if [ ! -f "$BUSYBOX_BIN" ] && [ -f "$PAK_DIR/bin/busybox" ]; then
+    BUSYBOX_BIN="$PROJECT_ROOT/build/busybox.preserved"
+    cp "$PAK_DIR/bin/busybox" "$BUSYBOX_BIN"
+fi
 
 if [ ! -f "$GIT_BIN" ]; then
     printf 'ERROR: Git binary not found at %s or %s\n' \
@@ -40,6 +45,16 @@ if [ ! -f "$GIT_HTTPS_HELPER" ]; then
     printf 'ERROR: git-remote-https not found at %s\n' "$GIT_HTTPS_HELPER" >&2
     printf 'Run scripts/build_git.sh first (it builds the https helper).\n' >&2
     exit 1
+fi
+
+# Vendored BusyBox: the daemon's pinned interpreter (fail-open — the
+# daemon self-tests it and falls back to the device shell, and launch.sh
+# never depends on it). Unlike git it is not launch-critical, so a
+# missing binary is a loud warning, not a build failure.
+if [ ! -f "$BUSYBOX_BIN" ]; then
+    printf 'WARNING: busybox not found at %s\n' "$PREFIX/bin/busybox" >&2
+    printf 'Run scripts/build_busybox.sh to include the pinned interpreter.\n' >&2
+    BUSYBOX_BIN=""
 fi
 
 # CA bundle for TLS verification: git's baked-in path points at the build
@@ -86,6 +101,11 @@ cp "$CA_BUNDLE" "$PAK_DIR/share/ca-bundle.crt"
 printf 'intentionally empty — silences git template warnings\n' \
     > "$PAK_DIR/share/templates/.keep"
 
+# Vendored BusyBox — the daemon's pinned interpreter (see build_busybox.sh)
+if [ -n "$BUSYBOX_BIN" ]; then
+    cp "$BUSYBOX_BIN" "$PAK_DIR/bin/busybox"
+fi
+
 # PAK root: launch.sh (Tool menu entry point)
 cp "$PLATFORM_DIR/launch.sh" "$PAK_DIR/launch.sh"
 
@@ -123,8 +143,9 @@ printf '%s\n' "${ota_branch:-main}" > "$PAK_DIR/ota_channel.txt"
 # instead of surfacing as git's misleading "unable to find remote helper".
 # Format: <sha256> <bytes> <pak-relative-path>
 : > "$PAK_DIR/checksums.txt"
-for f in bin/git libexec/git-core/git libexec/git-core/git-remote-https \
+for f in bin/git bin/busybox libexec/git-core/git libexec/git-core/git-remote-https \
          libexec/git-core/git-remote-http share/ca-bundle.crt; do
+    [ -f "$PAK_DIR/$f" ] || continue
     printf '%s %s %s\n' \
         "$(sha256sum "$PAK_DIR/$f" | cut -d' ' -f1)" \
         "$(wc -c < "$PAK_DIR/$f")" \
@@ -138,6 +159,9 @@ chmod +x "$PAK_DIR/bin/git" \
          "$PAK_DIR/libexec/git-core/git" \
          "$PAK_DIR/libexec/git-core/git-remote-https" \
          "$PAK_DIR/libexec/git-core/git-remote-http"
+if [ -f "$PAK_DIR/bin/busybox" ]; then
+    chmod +x "$PAK_DIR/bin/busybox"
+fi
 
 # ── Line-ending sanity check ─────────────────────────────────────────
 # CRLF in any shell script makes the kernel exec fail silently on the

@@ -416,6 +416,82 @@ assert_file_not_exists "1.3-D: no push attempted offline" "$TEST_TMPDIR/offline_
 assert_file_not_exists "1.3-D: no clean marker offline with unpushed" \
     "$REPO/.continuity/clean_shutdown"
 
+# ═══ Sprint 1.7 — vendored interpreter re-exec (fail-open) ══════════
+
+# A fake PAK dir per case; a fake "busybox" whose behavior we script.
+# The real exec is observed via a subshell: exec replaces the subshell
+# with the fake binary, whose exit code (7) becomes the subshell's rc.
+BB_PAK="$TEST_TMPDIR/bbpak"
+mkdir -p "$BB_PAK/bin"
+BB_SELF="$TEST_TMPDIR/fake_daemon.sh"
+printf '#!/bin/sh\ntrue\n' > "$BB_SELF"
+
+mk_fake_bb() {
+    # $1: rc for self-test 1 (ash -c), $2: rc for self-test 2 (ash -n)
+    cat > "$BB_PAK/bin/busybox" <<EOF
+#!/bin/sh
+case "\$1" in
+    ash)
+        case "\$2" in
+            -c) exit $1 ;;
+            -n) exit $2 ;;
+            *)  printf '%s\n' "\$*" > "$TEST_TMPDIR/bb_exec_args"; exit 7 ;;
+        esac ;;
+esac
+exit 0
+EOF
+    chmod +x "$BB_PAK/bin/busybox"
+}
+
+# 1.7-A: no vendored binary → fall through to device sh
+rm -f "$BB_PAK/bin/busybox" "$TEST_TMPDIR/bb_exec_args"
+unset CONTINUITY_BB_REEXEC
+CONTINUITY_BB_STATUS=""
+CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" cd_reexec_busybox
+assert_eq "1.7-A: no binary falls through" \
+    "device sh (no vendored busybox bundled)" "$CONTINUITY_BB_STATUS"
+
+# 1.7-B: kill switch wins even with a working binary
+mk_fake_bb 0 0
+CONTINUITY_BB_STATUS=""
+CONTINUITY_VENDOR_SH=0 CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" cd_reexec_busybox
+assert_eq "1.7-B: kill switch disables re-exec" \
+    "device sh (vendored interpreter disabled)" "$CONTINUITY_BB_STATUS"
+assert_file_not_exists "1.7-B: no exec attempted" "$TEST_TMPDIR/bb_exec_args"
+
+# 1.7-C: binary fails self-test (wrong arch / truncated) → fall through
+mk_fake_bb 1 0
+CONTINUITY_BB_STATUS=""
+CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" cd_reexec_busybox
+assert_eq "1.7-C: failed self-test falls through" \
+    "device sh (vendored busybox failed self-test)" "$CONTINUITY_BB_STATUS"
+
+# 1.7-D: vendored ash cannot parse the daemon → fall through
+mk_fake_bb 0 1
+CONTINUITY_BB_STATUS=""
+CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" cd_reexec_busybox
+assert_eq "1.7-D: failed parse probe falls through" \
+    "device sh (vendored ash cannot parse daemon)" "$CONTINUITY_BB_STATUS"
+
+# 1.7-E: healthy binary → exec taken with ash + script path
+mk_fake_bb 0 0
+rm -f "$TEST_TMPDIR/bb_exec_args"
+rc=0
+( CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" \
+    cd_reexec_busybox --flag ) || rc=$?
+assert_rc "1.7-E: subshell replaced by exec (fake bb rc)" 7 "$rc"
+assert_eq "1.7-E: exec argv is 'ash <self> <args>'" \
+    "ash $BB_SELF --flag" "$(cat "$TEST_TMPDIR/bb_exec_args" 2>/dev/null)"
+
+# 1.7-F: already re-execed → never loop, reports pinned
+CONTINUITY_BB_STATUS=""
+rm -f "$TEST_TMPDIR/bb_exec_args"
+CONTINUITY_BB_REEXEC=1 CONTINUITY_PAK_DIR="$BB_PAK" CONTINUITY_DAEMON_SELF="$BB_SELF" cd_reexec_busybox
+assert_eq "1.7-F: re-exec guard reports pinned" \
+    "vendored busybox (pinned)" "$CONTINUITY_BB_STATUS"
+assert_file_not_exists "1.7-F: no second exec" "$TEST_TMPDIR/bb_exec_args"
+unset CONTINUITY_BB_REEXEC
+
 # --- Report ---
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
