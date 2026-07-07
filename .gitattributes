@@ -33,3 +33,4 @@ build/git.preserved                             binary
 build/git-remote-https.preserved                binary
 build/busybox.preserved                         binary
 build/ca-bundle.preserved                       binary
+tests/fixtures/rzip/*.bin                       binary

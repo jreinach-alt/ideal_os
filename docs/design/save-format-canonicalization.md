@@ -85,10 +85,18 @@ free (a GB-only handheld never receives 500 PS1 saves).
   ("compressed save skipped — set save format to uncompressed"), never
   stored corrupt, never guessed at. NextUI default and RetroDeck with
   compression off cover the real Phase 2 fleet.
-- **Phase 3:** a tiny static `rzip` codec tool (zlib is already in our
-  cross-toolchain from the git build) lifts the quarantine:
+- **Phase 3:** the `continuity-rzip` codec lifts the quarantine:
   decompress inbound, and recompress outbound only for devices whose
   platform map declares `"save_container": "rzip"`.
+  **Status: the codec already exists and is validated** —
+  `tools/rzip/rzip.c` (built by `scripts/build_rzip.sh`: host binary
+  for tests/repo-side, static aarch64 for on-device). Format pinned to
+  libretro-common `rzip_stream.c` and cross-validated bidirectionally
+  against an independent implementation, byte-identical, including
+  multi-chunk; committed fixtures in `tests/fixtures/rzip/` +
+  `tests/unit/tools/test_rzip.sh` pin the format in CI. Phase 3's
+  remaining work is only the shell integration and adding the binary
+  to `build_pak.sh` + `checksums.txt`.
 
 ## Platform map extensions (config is data)
 
