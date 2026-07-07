@@ -13,6 +13,14 @@
 set -u
 
 BB="$1"
+# The script cd's around during the matrix — a relative binary path
+# would silently stop resolving after the first cd (every later check
+# fails "not found"; field-found on the CI runner, which passes the
+# repo-relative path).
+case "$BB" in
+    /*) ;;
+    *)  BB="$(pwd)/$BB" ;;
+esac
 Q="qemu-aarch64-static"
 W=$(mktemp -d)
 trap 'cd /; rm -rf "$W"' EXIT
@@ -81,7 +89,11 @@ $Q "$BB" date '+%Y-%m-%d %H:%M:%S' 2>/dev/null | grep -qE '^20[0-9]{2}-' && ok |
 $Q "$BB" date '+%s' 2>/dev/null | grep -qE '^[0-9]+$' && ok || bad "date +%s"
 check "sleep 0 (integer)"          $Q "$BB" sleep 0
 check "sleep 0.1 (fractional)"     $Q "$BB" sleep 0.1
-$Q "$BB" ping -c 1 -W 3 127.0.0.1 >/dev/null 2>&1 && ok || bad "ping -c 1 -W 3 (flags/socket)"
+# ping needs a raw socket: root-only. The device runs everything as
+# root; CI runners do not — so assert flag PARSING here (a permission
+# error is acceptable, a usage error is not), same pattern as wget.
+pout=$($Q "$BB" ping -c 1 -W 3 127.0.0.1 2>&1); prc=$?
+if [ $prc -eq 0 ] || ! printf '%s' "$pout" | grep -qi 'usage\|invalid\|bad option'; then ok; else bad "ping -c 1 -W 3 flags (rc=$prc out=$pout)"; fi
 wout=$($Q "$BB" wget --spider -q -T 3 https://127.0.0.1:1 2>&1); wrc=$?
 if [ $wrc -ne 0 ] && ! printf '%s' "$wout" | grep -qi 'usage\|unrecognized\|bad option'; then ok; else bad "wget --spider -q -T flags (rc=$wrc)"; fi
 h=$(printf 'x' | $Q "$BB" sha256sum | cut -d' ' -f1)

@@ -28,11 +28,19 @@ run_test() {
     test_file="$1"
     rel_path="${test_file#"$REPO_ROOT"/}"
 
-    if busybox ash "$test_file" >/dev/null 2>&1; then
+    # Capture output so a failure is diagnosable from the runner log —
+    # a CI gate that hides its failure reason costs a full round-trip.
+    _rt_out="${TMPDIR:-/tmp}/continuity_test_out.$$"
+    if busybox ash "$test_file" >"$_rt_out" 2>&1; then
         printf '[PASS] %s\n' "$rel_path"
+        rm -f "$_rt_out"
         return 0
     else
         printf '[FAIL] %s\n' "$rel_path"
+        printf '  ── output ──\n'
+        sed 's/^/  /' "$_rt_out"
+        printf '  ── end ──\n'
+        rm -f "$_rt_out"
         return 1
     fi
 }
