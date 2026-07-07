@@ -375,6 +375,54 @@ Java/Kotlin app implementing the PAL interface natively. JGit for git operations
 
 ---
 
+## Proposed — Save-State Sync (pending owner approval)
+
+Design drafted 2026-07-07 at owner request: `docs/design/save-state-sync.md`.
+Un-defers save states from opaque backup to same-core cross-device
+handoff (quicksave on one device, resume on another). Key findings:
+every roadmap platform's state payload reduces to bare libretro core
+data (RetroArch's loader accepts it as the legacy format — verified in
+source), so handoff is container transforms + metadata, no emulator
+changes. Phases S1–S3 in the doc; S1 rides with Sprint 2.0.
+**Owner decisions needed:** MuOS vs Onion in the platform list;
+auto-slot handoff default; approval of the conflict policy
+(states = last-writer-wins per slot, history as undo — unlike saves).
+
+## Sync robustness backlog (gap review 2026-07-07)
+
+From an offline-queue/dedupe contract review; ordered by severity:
+
+1. **In-session divergence never reconciles.** A powered-on device
+   whose push is rejected (remote moved: another device synced or
+   enrolled) retries the push every 30s until REBOOT — only boot
+   dispatch runs the pull/conflict path. Long docked sessions stall
+   sync until restart. Fix direction: poll loop detects non-FF push
+   failure and runs the stale-boot reconcile inline (needs a spec —
+   it changes daemon semantics mid-session).
+2. **Misleading failure message**: runtime poll reports rejected
+   pushes as "Push failed — check credentials"; the common cause is
+   divergence, not credentials. Cheap fix, fold into (1).
+3. **`keep_newest` conflict resolution trusts device wall clocks**
+   (ISO-string compare of the two sides' timestamps). A wrong-clock
+   device silently picks the wrong side. Mitigations: preflight
+   already fails hard on year<2025; option: refuse keep_newest when
+   timestamps are implausibly close/ordered vs commit times. UI
+   default remains `prompt`, which is unaffected.
+4. **Clock-set-backwards blind spot in the poll sentinel**: a save
+   written while the device clock is behind the sentinel's mtime is
+   invisible to `find -newer` until the next boot's full catch-up
+   scan (which always recovers it). Bounded; documented here rather
+   than fixed — the fix (content-hash scanning every poll) costs more
+   than the window is worth on SD cards.
+
+Verified-covered (no action): offline commit queuing + WiFi-recovery
+push + shutdown final push; two-device offline weave incl. one-sided
+adds (harness S5); cmp-based no-op dedupe; OTA version-parity
+adoption; enrollment offline retry; conflict resolution while offline
+queues and pushes on recovery.
+
+---
+
 ## Phase 4 — Polish and Community
 
 ### Sprint 4.1 — Enrollment Web Experience (outline)
