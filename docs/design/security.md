@@ -1,7 +1,10 @@
-# Continuity — Security Model
+# Continuity — Security Model (SUPERSEDED)
 
-**Status:** Draft
-**Date:** 2026-03-12
+**Status:** SUPERSEDED by `docs/design/security-model.md`
+(2026-07-07 review: complete PAT inventory, OTA authenticity, threat
+table, review checklist). Kept for the Sprint 0.1 historical record —
+do not extend this file.
+**Original date:** 2026-03-12
 
 ## Trust Architecture
 

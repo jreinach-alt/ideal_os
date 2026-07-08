@@ -1,6 +1,6 @@
 # Sprint 1.7 — Vendored Interpreter (BusyBox pinning, fail-open)
 
-**Status:** Implemented — pending user approval
+**Status:** Complete — merged to main (PR #3, 2026-07-07)
 **Date:** 2026-07-07
 **Dependencies:** Sprint 1.6 (OTA — the delivery path for this change),
 hardware-validated daemon (1.1–1.3)

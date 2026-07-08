@@ -201,6 +201,11 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ## Phase 1 — NextUI Platform Client (TrimUI Brick)
 
+**Phase status: MERGED TO MAIN (PR #3, 2026-07-07) and
+hardware-validated on the TrimUI Brick.** Statuses below reflect the
+merge: the owner's merge of PR #3 constitutes approval of the
+implemented sprints (1.1–1.3, 1.6, 1.7, 1.8) and their specs.
+
 **Goal:** Working save sync on a TrimUI Brick. Core sync is already built — this phase wraps it in platform-specific daemon lifecycle and user-facing UI.
 
 ### Sprint 1.1 — Daemon Bootstrap + Enrollment
@@ -228,7 +233,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.2 — Boot Dispatch
 
-**Status:** Implemented — pending approval (QA'd 2026-07-06)
+**Status:** Complete — merged to main (PR #3); hardware-validated
 
 **Scope:**
 - Boot phase detection: cold start (no sentinel) vs stale boot (sentinel + no clean_shutdown) vs normal boot (sentinel + clean_shutdown)
@@ -248,7 +253,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.3 — Poll Loop + Graceful Shutdown
 
-**Status:** Implemented — pending approval (QA'd 2026-07-06)
+**Status:** Complete — merged to main (PR #3); hardware-validated
 
 **Scope:**
 - Runtime poll loop: call `rp_run` every 30 seconds
@@ -291,7 +296,7 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 1.6 — OTA Updates
 
-**Status:** Implemented — pending approval (2026-07-07, spec: sprint-1.6-spec.md)
+**Status:** Complete — merged to main (PR #3); reworked by Sprint 1.8 (channels)
 
 **Scope:** git-based over-the-air updates using the bundled git — persistent sparse clone of the tracked PAK, channel from build branch, verified staged apply, X/B on-device prompt. Card swaps only for binaries and bootstrap breakage.
 
@@ -325,9 +330,17 @@ Small, modular sprints. Each sprint produces a testable, working increment. All 
 
 ### Sprint 2.0 — Save-Format Canonicalization (design approved first)
 
+**Reference Specs:** `docs/design/save-format-canonicalization.md` +
+`docs/design/nextui-format-matrix.md` (owner-requested research gate,
+completed 2026-07-08: full 4-save × 5-state NextUI option matrix pinned
+to vendored source; its §8 spec deltas are 2.0 scope and its §6
+scanner-coverage + `.rtc` fixes are 2.0 prerequisites).
+
 **Scope:**
-- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07 with source-verified NextUI format taxonomy; approve before implementation)
+- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07; approve before implementation) with the format-matrix §8 deltas
 - Canonical repo format: raw SRAM as `<system>/<rom_basename>.srm`; name-style translation per platform map (`minui`/`retroarch`/`generic`); RZIP detection + quarantine (codec deferred to Phase 3)
+- Scanner/filter pattern expansion (matrix §6): all five state name shapes + `.rtc` as a save-class sibling — today 4 of 5 state formats are never backed up and `.rtc` is never synced
+- Identity resolution ROM-anchored (matrix §5); ext-strip heuristic as repo-side fallback only
 - Materialize saves only where the matching ROM exists (per-device sparse sync)
 - One-time repo migration script with dry-run
 
