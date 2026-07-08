@@ -330,9 +330,17 @@ implemented sprints (1.1–1.3, 1.6, 1.7, 1.8) and their specs.
 
 ### Sprint 2.0 — Save-Format Canonicalization (design approved first)
 
+**Reference Specs:** `docs/design/save-format-canonicalization.md` +
+`docs/design/nextui-format-matrix.md` (owner-requested research gate,
+completed 2026-07-08: full 4-save × 5-state NextUI option matrix pinned
+to vendored source; its §8 spec deltas are 2.0 scope and its §6
+scanner-coverage + `.rtc` fixes are 2.0 prerequisites).
+
 **Scope:**
-- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07 with source-verified NextUI format taxonomy; approve before implementation)
+- Implement `docs/design/save-format-canonicalization.md` (drafted 2026-07-07; approve before implementation) with the format-matrix §8 deltas
 - Canonical repo format: raw SRAM as `<system>/<rom_basename>.srm`; name-style translation per platform map (`minui`/`retroarch`/`generic`); RZIP detection + quarantine (codec deferred to Phase 3)
+- Scanner/filter pattern expansion (matrix §6): all five state name shapes + `.rtc` as a save-class sibling — today 4 of 5 state formats are never backed up and `.rtc` is never synced
+- Identity resolution ROM-anchored (matrix §5); ext-strip heuristic as repo-side fallback only
 - Materialize saves only where the matching ROM exists (per-device sparse sync)
 - One-time repo migration script with dry-run
 

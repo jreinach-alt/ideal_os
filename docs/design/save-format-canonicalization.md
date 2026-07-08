@@ -61,7 +61,12 @@ stripped: `Links Awakening (USA).gba.sav` → `Links Awakening (USA)`
 (+ system `gb`) → repo `gb/Links Awakening (USA).srm`.
 
 - Strip rules per format: `.sav` (MinUI: also the embedded ROM ext —
-  `X.gba.sav` → `X`), `.srm`, bare `.sav` (generic).
+  `X.gba.sav` → `X`), `.srm`, bare `.sav` (generic). The exact
+  upstream ext-strip rule (2–4 char extensions only) and its ambiguity
+  cases are pinned in `nextui-format-matrix.md` §2; where a device ROM
+  list is available, ROM-anchored resolution (§5 there) supersedes the
+  heuristic — Decision 3 already requires the ROM list, so the
+  device-side mapper gets exact matching for free.
 - **Fuzzy matching is explicitly deferred.** "Links Awakening (USA)"
   vs "Legend of Zelda, The - Link's Awakening (U)" are DIFFERENT repo
   saves. Wrong-merge corrupts someone's 40-hour file; duplicate saves
