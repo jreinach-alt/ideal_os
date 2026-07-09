@@ -41,7 +41,7 @@ OTA_PAK_DIR="${CONTINUITY_PAK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 OTA_HOME="${CONTINUITY_HOME:-/mnt/SDCARD/.continuity}"
 OTA_REPO="$OTA_HOME/ota-repo"
 OTA_LOG="$OTA_HOME/update.log"
-OTA_URL="${CONTINUITY_OTA_URL:-https://github.com/jreinach-alt/ideal_os}"
+OTA_URL="${CONTINUITY_OTA_URL:-https://github.com/jreinach-alt/continuity}"
 OTA_GIT="${CONTINUITY_GIT_BIN:-$OTA_PAK_DIR/bin/git}"
 
 ota_log() {
@@ -93,6 +93,22 @@ ota_ensure_repo() {
     mkdir -p "$OTA_HOME"
 
     if [ -d "$OTA_REPO/.git" ]; then
+        # Origin reconcile (migration): the persistent clone stores the
+        # remote it was first cloned from, and every fetch in ota_check
+        # goes through origin. When the shipped OTA_URL default has moved
+        # (the ideal_os -> continuity handoff), a reused clone would
+        # otherwise keep fetching the OLD home forever. Repoint it to the
+        # current default so all future updates are ordinary fetches.
+        # Idempotent: logs only when it actually changes the remote.
+        local cur_origin
+        cur_origin=$(ota_git -C "$OTA_REPO" remote get-url origin 2>/dev/null)
+        if [ -n "$cur_origin" ] && [ "$cur_origin" != "$OTA_URL" ]; then
+            if ota_git -C "$OTA_REPO" remote set-url origin "$OTA_URL" >>"$OTA_LOG" 2>&1; then
+                ota_log "OTA remote repointed to $OTA_URL"
+            else
+                ota_log "ERROR: failed to repoint OTA remote to $OTA_URL"
+            fi
+        fi
         return 0
     fi
 

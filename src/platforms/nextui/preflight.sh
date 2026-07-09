@@ -19,7 +19,7 @@
 #   PF_LSREMOTE_URL  — public repo for the network probe
 #                      (default: this project's public GitHub repo)
 
-PF_LSREMOTE_URL="${PF_LSREMOTE_URL:-https://github.com/jreinach-alt/ideal_os}"
+PF_LSREMOTE_URL="${PF_LSREMOTE_URL:-https://github.com/jreinach-alt/continuity}"
 
 _pf_report=""
 _pf_first_fail=""
